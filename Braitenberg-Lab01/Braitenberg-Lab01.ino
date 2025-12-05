@@ -90,7 +90,7 @@ int pauseTime = 2500;   //time before robot moves
 int stepTime = 500;     //delay time between high and low on step pin
 int wait_time = 3000;   //delay for printing data
 
-#define TRACKWIDTH 215   //distance between the wheels
+#define TRACKWIDTH 216   //distance between the wheels
 #define MOVE_VEL 100     //velocity of movement, mm/s
 #define ROT_VEL 1     //velocity of movement, rad/s
 
@@ -390,11 +390,6 @@ void moveMotors(long leftPosition, float leftVelocity, long rightPosition, float
  
   Serial.println("move function");
 
-
-  digitalWrite(redLED, HIGH);//turn on red LED
-  digitalWrite(grnLED, HIGH);//turn on green LED
-  digitalWrite(ylwLED, HIGH);//turn off yellow LED
-
   //Unomment the next 2 lines for relative movement
   stepperLeft.move(leftPosition);//move left wheel to relative position
   stepperRight.move(rightPosition);//move right wheel to relative position
@@ -402,6 +397,7 @@ void moveMotors(long leftPosition, float leftVelocity, long rightPosition, float
   stepperLeft.setSpeed(leftVelocity);//set left motor speed
   stepperRight.setSpeed(rightVelocity);//set right motor speed
 
+  //block until done
   steppers.runSpeedToPosition();
 
   // runToStop();//run until the robot reaches the target
@@ -468,24 +464,6 @@ void move(float lindist, float angdist) {
   move(lindist, angdist, MOVE_VEL, ROT_VEL);
 } 
 
-// go-to-angle(int angle, angvel)
-// move(0, targetangle – currentangle, 0, angvel)
-
-// go-to-goal(int x, int y)
-// angle = atan2(y – currentY, x - currentX)
-// go-to-angle(int angle, angvel)
-// move (sqrt((y – currentY)^2 + (x – currentX)^2))
-
-// moveSquare(int side)
-// repeat 4x
-// move(side, 0, linvel, 0)
-// move(0, pi/2, 0, angvel)
-
-
-// moveCircle(int diam, int dir)
-// move(diam * pi, 2pi, linvel, angvel)
-
-
 /*
   Pivots around one wheel.
   Wheel that spins is determined by the turn amount's sign and if it is to goForward
@@ -529,7 +507,7 @@ void turn(float turnRadians, float circleRadius) {
   Moves the robot forward, distanceMM milimeters.
   Blocks until motors are done moving.
 */
-void forward(int distanceMM) {
+void forward(float distanceMM) {
   move(distanceMM, 0);
 }
 
@@ -537,7 +515,7 @@ void forward(int distanceMM) {
   Moves the robot backward, distanceMM milimeters.
   Blocks until motors are done moving.
 */
-void reverse(int distanceMM) {
+void reverse(float distanceMM) {
   forward(-distanceMM);
 }
 
@@ -552,24 +530,75 @@ void stop() {
 /*
   Turns around a full circle.
   Positive diam is going around left, negative is going around right
+  Turns the red led on.
 */
 void moveCircle(float diam) {
+  digitalWrite(redLED, HIGH);//turn on red LED
   if(diam<0)
     turn(-2*PI, diam/2);
   else
     turn(2*PI, diam/2);
+  digitalWrite(redLED, LOW);//turn off red LED
 }
 
 /*
   The moveFigure8() function takes the diameter in inches as the input. It uses the moveCircle() function
   twice, left then right, to create a figure 8 with circles of the given diameter.
+  Turns the red and yellow led on.
 */
 void moveFigure8(float diam) {
+  digitalWrite(ylwLED, HIGH);//turn on yellow LED
   moveCircle(diam);
   // delay(wait_time);
   moveCircle(-diam);
+  digitalWrite(ylwLED, LOW);//turn off yellow LED
 }
 
+/*
+  Points the robot in the angle given .
+  Turns on and off the green led.
+*/
+void goToAngle(float angleRadians){
+  digitalWrite(grnLED, HIGH);//turn on green LED
+  spin(angleRadians);
+  digitalWrite(grnLED, LOW);//turn off green LED
+}
+
+
+// goal: green and yellow
+
+/*
+  Points the position in mm.
+  Pos x is forward, pos y is to the left (Dr. Berry coordinate system)
+  Turns on and off the green and yellow leds.
+*/
+void goToGoal(float x, float y){
+  digitalWrite(ylwLED, HIGH);//turn on yellow LED
+  goToAngle(atan2(y, x)); //turns on green
+  digitalWrite(grnLED, HIGH);//keep on green LED
+  forward(hypot(y, x));
+  digitalWrite(grnLED, LOW);//turn off green LED
+  digitalWrite(ylwLED, LOW);//turn off yellow LED
+}
+
+/*
+  Drives a square, forward then right.
+  Turns on and off the red, green and yellow leds.
+*/
+void square(float len) {
+  digitalWrite(redLED, HIGH);//turn on red LED
+  digitalWrite(ylwLED, HIGH);//turn on yellow LED
+  digitalWrite(grnLED, HIGH);//keep on green LED
+  for(int i=0; i<4; i++){
+    forward(len);
+    delay(100);
+    spin(-PI/2); //turn right
+    delay(100);
+  }
+  digitalWrite(redLED, LOW);//turn off red LED
+  digitalWrite(ylwLED, LOW);//turn off yellow LED
+  digitalWrite(grnLED, LOW);//keep off green LED
+}
 
 //// MAIN
 void setup()
@@ -584,11 +613,15 @@ void setup()
   Serial.begin(baudrate);     //start serial monitor communication
   Serial.println("Robot starting...Put ON TEST STAND");
   delay(pauseTime); //always wait 2.5 seconds before the robot moves
+
+  // do the demo function
+  demonstration3();
 }
 
-// does the lab1 demo
+// does the lab1 demo, part 1
+// basic movements
 void demonstration1() {
-  forward(200); //forward 200mm
+  forward(400); //forward 200mm
   delay(wait_time);
   reverse(200); //backward 200mm
   delay(wait_time);
@@ -600,18 +633,36 @@ void demonstration1() {
 
   turn(PI/2, 200); //turn forward, left, around a 200mm radius circle, 90degrees of the circle
   delay(wait_time);
-  turn(-PI, 200); //turn forward, right, around a 200mm radius circle, 180degrees of the circle
+  turn(-PI/2, 200); //turn forward, right, around a 200mm radius circle, 90degrees of the circle
   delay(wait_time);
 
-  spin(PI); //spin in place left, 180degrees
+  spin(PI/2); //spin in place left, 90degrees
   delay(wait_time);
-  spin(-PI/2); //spin in place left, 90degrees
+  spin(-PI/2); //spin in place right, 90degrees
+  delay(wait_time);
+  
+}
+
+// does the lab1 demo, part 2
+// circle and figure eight
+void demonstration2() {
+  allOFF();
+  moveCircle(-914); //move right around a 3ft diameter circle
+  
   delay(wait_time);
 
-  moveCircle(280); //move left around a 280mm diameter circle
-  delay(wait_time);
+  moveFigure8(914); //move left then right two 3ft diameter circles
+}
 
-  moveFigure8(130); //move left around two 130mm diameter circles
+// does the lab1 demo, part 3
+// circle and figure eight
+void demonstration3() {
+  allOFF();
+
+  // goToGoal(100, 200);
+  goToAngle(PI/3);
+
+  // square(914); //3 ft square
 }
 
 void loop()
@@ -627,7 +678,11 @@ void loop()
   //print_encoder_data();   //prints encoder data
 
 
-  demonstration1();
+  // demonstration1();
+  // spin(PI);
+  // delay(wait_time); 
+  // stop();
+  // delay(wait_time);
 
   delay(wait_time);               //wait to move robot or read data
 }
