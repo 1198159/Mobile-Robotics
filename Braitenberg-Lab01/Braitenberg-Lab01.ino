@@ -75,7 +75,7 @@ int leds[3] = {5,6,7};      //array of LED pin numbers
 #define rtStepPin 50 //right stepper motor step pin 
 #define rtDirPin 51  // right stepper motor direction pin 
 #define ltStepPin 52 //left stepper motor step pin 
-#define ltDirPin 53  //left stepper motor direction pin 
+#define ltDirPin 49  //left stepper motor direction pin , WAS 53, pin broke, need that pin cleared
 
 AccelStepper stepperRight(AccelStepper::DRIVER, rtStepPin, rtDirPin);//create instance of right stepper motor object (2 driver pins, low to high transition step pin 52, direction input pin 53 (high means forward)
 AccelStepper stepperLeft(AccelStepper::DRIVER, ltStepPin, ltDirPin);//create instance of left stepper motor object (2 driver pins, step pin 50, direction input pin 51)
@@ -88,7 +88,11 @@ MultiStepper steppers;//create instance to control multiple steppers at the same
 
 int pauseTime = 2500;   //time before robot moves
 int stepTime = 500;     //delay time between high and low on step pin
-int wait_time = 1000;   //delay for printing data
+int wait_time = 3000;   //delay for printing data
+
+#define TRACKWIDTH 215   //distance between the wheels
+#define MOVE_VEL 100     //velocity of movement, mm/s
+#define ROT_VEL 1     //velocity of movement, rad/s
 
 //define encoder pins
 #define LEFT 0        //left encoder
@@ -188,24 +192,25 @@ void runAtSpeed ( void ) {
 }
 
 /*This function, runToStop(), will run the robot until the target is achieved and
-   then stop it
+   then stop it.
+*  Controls both motors at the same time, and will wait for both to finish if one finishes first.
 */
-void runToStop ( void ) {
-  int runNow = 1;
-  int rightStopped = 0;
-  int leftStopped = 0;
+void runToStop () {
+  
+  bool rightStopped = false;
+  bool leftStopped = false;
 
-  while (runNow) {
+  while (true) {
     if (!stepperRight.run()) {
-      rightStopped = 1;
+      rightStopped = true;
       stepperRight.stop();//stop right motor
     }
     if (!stepperLeft.run()) {
-      leftStopped = 1;
+      leftStopped = true;
       stepperLeft.stop();//stop ledt motor
     }
     if (rightStopped && leftStopped) {
-      runNow = 0;
+      return;
     }
   }
 }
@@ -377,14 +382,11 @@ void move6() {
 
   steppers.runSpeedToPosition(); // Blocks until all are in position
 }
-/*
-General purpose function to do moves that abstracts away the functionality
 
+/*
+General purpose function to motor moves (motor positions and velocities)
 */
-const int MOVE_AMT = 600;
-const int TURN_AMT = PI/4;
-const int MOVE_VEL = 100;
-void move(int leftPosition, int leftVelocity, int rightPosition, int rightVelocity){
+void moveMotors(long leftPosition, float leftVelocity, long rightPosition, float rightVelocity){
  
   Serial.println("move function");
 
@@ -400,101 +402,172 @@ void move(int leftPosition, int leftVelocity, int rightPosition, int rightVeloci
   stepperLeft.setSpeed(leftVelocity);//set left motor speed
   stepperRight.setSpeed(rightVelocity);//set right motor speed
 
-  steppers.runSpeedToPosition(); // Blocks until all are in position
+  steppers.runSpeedToPosition();
+
+  // runToStop();//run until the robot reaches the target
 }
 /*
-Steps to MM
+MM to Steps
 */
-int distanceToSteps(int distance){
-  //steps * 200 I * wheel diameter
-  return (int)(distance * 200.0f / (PI*85)); //TODO
+float distanceToSteps(float distance){
+  //distance [mm] divided by circumference [mm] (pi times diameter, 85 mm) to steps (mult by should be 200, is 800 for some reason)
+  return (distance * 800.0 / (PI*85.0));
 }
-//this is under the assumption that ONE MOTOR IS BEING DRIVEN
-int radiansToSteps(int radians){
-  //mm / trackwidth * 2PI
-  return distanceToSteps(radians * 210.0f / (2*PI));
+//this is under the assumption that both MOTOR IS BEING DRIVEN
+float radiansToSteps(float radians){
+  //radians*trackwidth is the distance in mm that wheel needs to spin
+  return distanceToSteps(radians * TRACKWIDTH / 2);
 
 }
 
 /*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+Returns the value that is closest to 0
 */
-void pivot(int direction) {
-  int positionAmt = distanceToSteps(MOVE_AMT); //TODO
-  int velocityAmt = distanceToSteps(MOVE_VEL); //TODO
-  
-  if(direction > 0){
-    move(positionAmt, velocityAmt, 0, 0);
-  } else {
-  move(0, 0, positionAmt, velocityAmt);
+float closestto0(float a, float b) {
+  float c = a;
+  float d = b;
+  if(c<0) c = -c;
+  if(d<0) d = -d;
+
+  if(c<d) return a;
+  return b;
+}
+
+
+// Move:
+void move(float lindist, float angdist, float linvel, float angvel){
+  // if the signs don't agree, make them agree
+  if((lindist<0)!=(linvel<0)) linvel = -linvel;
+  if((angdist<0)!=(angvel<0)) angvel = -angvel;
+
+  // if not trying to move one, set velocity to zero
+  if(lindist==0) linvel=0;
+  if(angdist==0) angvel=0;
+
+  if((lindist!=0 && linvel==0) || (angdist!=0 && angvel==0)){
+    return;
   }
-}
 
-/*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
-*/
-void spin(int direction) {
-  int positionAmt = radiansToSteps(MOVE_AMT); //TODO
-  int velocityAmt = distanceToSteps(MOVE_VEL); //TODO
-  
-  move(positionAmt, velocityAmt, positionAmt, velocityAmt);
-
-}
-
-/*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
-*/
-void turn(int direction) {
-  int positionAmt = distanceToSteps(0); //TODO
-  int velocityAmt = distanceToSteps(0); //TODO
-  int turnScale = 2; //TODO
-  
-  if(direction > 0){
-    move(positionAmt, velocityAmt, positionAmt/turnScale, velocityAmt/turnScale);
-  } else {
-     move(positionAmt/turnScale, velocityAmt/turnScale, positionAmt, velocityAmt);
-
+  float steps1 = distanceToSteps(lindist) - radiansToSteps(angdist);
+  float steps2 = distanceToSteps(lindist) + radiansToSteps(angdist);
+  //Slow down the faster move so they (linear and rotational moves) finish at the same time
+  //skip velocity scaling if either distance is 0
+  if(lindist!=0 && angdist!=0){
+    linvel = closestto0(linvel, lindist / (angdist / angvel));
+    angvel = closestto0(angvel, angdist / (lindist / linvel));
   }
-}
-/*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
-*/
-void forward(int distance) {
-  int positionAmt = distanceToSteps(distance); //TODO
-  int velocityAmt = distanceToSteps(MOVE_VEL); //TODO
   
-  move(positionAmt, velocityAmt, positionAmt, velocityAmt);
+  float speed1 = distanceToSteps(linvel) - radiansToSteps(angvel);
+  float speed2 = distanceToSteps(linvel) + radiansToSteps(angvel);
+
+  moveMotors(steps1, speed1, steps2, speed2);
 }
+
+// move but using the MOVE_VEL and ROT_VEL constants
+void move(float lindist, float angdist) {
+  move(lindist, angdist, MOVE_VEL, ROT_VEL);
+} 
+
+// go-to-angle(int angle, angvel)
+// move(0, targetangle – currentangle, 0, angvel)
+
+// go-to-goal(int x, int y)
+// angle = atan2(y – currentY, x - currentX)
+// go-to-angle(int angle, angvel)
+// move (sqrt((y – currentY)^2 + (x – currentX)^2))
+
+// moveSquare(int side)
+// repeat 4x
+// move(side, 0, linvel, 0)
+// move(0, pi/2, 0, angvel)
+
+
+// moveCircle(int diam, int dir)
+// move(diam * pi, 2pi, linvel, angvel)
+
+
 /*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+  Pivots around one wheel.
+  Wheel that spins is determined by the turn amount's sign and if it is to goForward
 */
-void reverse(int distance) {
-  int positionAmt = distanceToSteps(0); //TODO
-  int velocityAmt = distanceToSteps(0); //TODO
-  
-  move(-positionAmt, -velocityAmt, positionAmt, velocityAmt);
+void pivot(float turnRadians, bool goForward) {
+  if(goForward==turnRadians>0)
+    move(turnRadians*TRACKWIDTH/2, turnRadians);  
+  else
+    move(-turnRadians*TRACKWIDTH/2, turnRadians);  
+}
+
+/*
+  Pivots around one wheel.
+  Wheel that spins is determined by the turn amount's sign, always prefers going forwards
+*/
+void pivot(float turnRadians) {
+  pivot(turnRadians, true);
+}
+
+/*
+  Spins in place, turnRadians amount.
+  Both mostors spin, opposite directions.
+  Positive is left
+  Blocks until motors are done moving.
+*/
+void spin(float turnRadians) {
+  move(0, turnRadians);
+}
+
+/*
+  Drive along a circle.
+  circleRadius positive means go around a circle forward, negative is backwards
+  turnRadians positive means turning left, negative is right
+*/
+void turn(float turnRadians, float circleRadius) {
+  float dist = circleRadius*turnRadians;
+  if(dist<0) dist = -dist;
+  move(dist, turnRadians);
 }
 /*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+  Moves the robot forward, distanceMM milimeters.
+  Blocks until motors are done moving.
+*/
+void forward(int distanceMM) {
+  move(distanceMM, 0);
+}
+
+/*
+  Moves the robot backward, distanceMM milimeters.
+  Blocks until motors are done moving.
+*/
+void reverse(int distanceMM) {
+  forward(-distanceMM);
+}
+
+/*
+  Stops the movement of the robot.
 */
 void stop() {
-  move(0,0,0,0);
+  moveMotors(0,0,0,0);
 }
 
 
-
-
 /*
-  INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
+  Turns around a full circle.
+  Positive diam is going around left, negative is going around right
 */
-void moveCircle(int diam, int dir) {
+void moveCircle(float diam) {
+  if(diam<0)
+    turn(-2*PI, diam/2);
+  else
+    turn(2*PI, diam/2);
 }
 
 /*
   The moveFigure8() function takes the diameter in inches as the input. It uses the moveCircle() function
-  twice with 2 different direcitons to create a figure 8 with circles of the given diameter.
+  twice, left then right, to create a figure 8 with circles of the given diameter.
 */
-void moveFigure8(int diam) {
+void moveFigure8(float diam) {
+  moveCircle(diam);
+  // delay(wait_time);
+  moveCircle(-diam);
 }
 
 
@@ -513,6 +586,34 @@ void setup()
   delay(pauseTime); //always wait 2.5 seconds before the robot moves
 }
 
+// does the lab1 demo
+void demonstration1() {
+  forward(200); //forward 200mm
+  delay(wait_time);
+  reverse(200); //backward 200mm
+  delay(wait_time);
+
+  pivot(PI/2); //pivot forward on left wheel, 90degrees
+  delay(wait_time);
+  pivot(-PI/2); //pivot forward on right wheel, 90degrees
+  delay(wait_time);
+
+  turn(PI/2, 200); //turn forward, left, around a 200mm radius circle, 90degrees of the circle
+  delay(wait_time);
+  turn(-PI, 200); //turn forward, right, around a 200mm radius circle, 180degrees of the circle
+  delay(wait_time);
+
+  spin(PI); //spin in place left, 180degrees
+  delay(wait_time);
+  spin(-PI/2); //spin in place left, 90degrees
+  delay(wait_time);
+
+  moveCircle(280); //move left around a 280mm diameter circle
+  delay(wait_time);
+
+  moveFigure8(130); //move left around two 130mm diameter circles
+}
+
 void loop()
 {
   //uncomment each function one at a time to see what the code does
@@ -522,9 +623,11 @@ void loop()
   // move4(); //move to target position with 2 different speeds - absolute position
    //move5(); //move continuously with 2 different speeds
    // move6(); //move to target position with 2 different speeds - relative position
-  forward(600);
   //Uncomment to read Encoder Data (uncomment to read on serial monitor)
   //print_encoder_data();   //prints encoder data
+
+
+  demonstration1();
 
   delay(wait_time);               //wait to move robot or read data
 }
