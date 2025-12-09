@@ -67,15 +67,16 @@
 #define redLED 5            //red LED for displaying states
 #define grnLED 6            //green LED for displaying states
 #define ylwLED 7            //yellow LED for displaying states
+#define bluLED 4            //blue LED for displaying states
 #define enableLED 13        //stepper enabled LED
-int leds[3] = {5,6,7};      //array of LED pin numbers
+int leds[4] = {redLED,grnLED,ylwLED,bluLED};      //array of LED pin numbers
 
 //define motor pin numbers
 #define stepperEnable 48    //stepper enable pin on stepStick 
 #define rtStepPin 50 //right stepper motor step pin 
 #define rtDirPin 51  // right stepper motor direction pin 
 #define ltStepPin 52 //left stepper motor step pin 
-#define ltDirPin 49  //left stepper motor direction pin , WAS 53, pin broke, need that pin cleared
+#define ltDirPin 53  //left stepper motor direction pin
 
 AccelStepper stepperRight(AccelStepper::DRIVER, rtStepPin, rtDirPin);//create instance of right stepper motor object (2 driver pins, low to high transition step pin 52, direction input pin 53 (high means forward)
 AccelStepper stepperLeft(AccelStepper::DRIVER, ltStepPin, ltDirPin);//create instance of left stepper motor object (2 driver pins, step pin 50, direction input pin 51)
@@ -119,9 +120,9 @@ void RwheelSpeed()
 }
 
 void allOFF(){
-  for (int i = 0;i<3;i++){
-    digitalWrite(leds[i],LOW);
-  }
+  for (int l : leds)
+    digitalWrite(l,LOW);
+  
 }
 
 //function to set all stepper motor variables, outputs and LEDs
@@ -134,16 +135,13 @@ void init_stepper(){
   digitalWrite(stepperEnable, stepperEnFalse);//turns off the stepper motor driver
   pinMode(enableLED, OUTPUT);//set enable LED as output
   digitalWrite(enableLED, LOW);//turn off enable LED
-  pinMode(redLED, OUTPUT);//set red LED as output
-  pinMode(grnLED, OUTPUT);//set green LED as output
-  pinMode(ylwLED, OUTPUT);//set yellow LED as output
-  digitalWrite(redLED, HIGH);//turn on red LED
-  digitalWrite(ylwLED, HIGH);//turn on yellow LED
-  digitalWrite(grnLED, HIGH);//turn on green LED
+  for (int l : leds) //set all leds to output
+    pinMode(l,OUTPUT);
+  for (int l : leds) //turn on all leds
+    digitalWrite(l, HIGH);
   delay(pauseTime / 5); //wait 0.5 seconds
-  digitalWrite(redLED, LOW);//turn off red LED
-  digitalWrite(ylwLED, LOW);//turn off yellow LED
-  digitalWrite(grnLED, LOW);//turn off green LED
+  for (int l : leds) //turn off all leds
+    digitalWrite(l, LOW);
 
   stepperRight.setMaxSpeed(max_speed);//set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
   stepperRight.setAcceleration(max_accel);//set desired acceleration in steps/s^2
@@ -614,6 +612,15 @@ void setup()
   Serial.println("Robot starting...Put ON TEST STAND");
   delay(pauseTime); //always wait 2.5 seconds before the robot moves
 
+
+  // digitalWrite(redLED, HIGH);//turn on red LED
+  // digitalWrite(ylwLED, HIGH);//turn on yellow LED
+  // digitalWrite(grnLED, HIGH);//turn on green LED
+  // digitalWrite(bluLED, HIGH);//turn on blue LED
+  // delay(pauseTime); //always wait 2.5 seconds before the robot moves
+  // allOFF();
+
+
   // do the demo function
   demonstration3();
 }
@@ -655,14 +662,12 @@ void demonstration2() {
 }
 
 // does the lab1 demo, part 3
-// circle and figure eight
+// gotogoal which includes gotoangle
 void demonstration3() {
   allOFF();
 
-  // goToGoal(100, 200);
-  goToAngle(PI/3);
-
-  // square(914); //3 ft square
+  // Go to goal 3', 4' includes go to angle 53 degrees and move forward 5'
+  goToGoal(914.4, 1219.2);
 }
 
 void loop()
