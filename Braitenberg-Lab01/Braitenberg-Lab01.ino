@@ -666,8 +666,14 @@ void demonstration2() {
 void demonstration3() {
   allOFF();
 
+  // 3 ft square
+  // square(914.4);
+  // delay(wait_time*3);
+
   // Go to goal 3', 4' includes go to angle 53 degrees and move forward 5'
   goToGoal(914.4, 1219.2);
+  delay(wait_time*3);
+  goToGoal(-609.6, -609.6);
 }
 
 void loop()
