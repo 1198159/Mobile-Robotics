@@ -87,11 +87,11 @@ MultiStepper steppers;//create instance to control multiple steppers at the same
 #define max_speed 1500 //maximum stepper motor speed
 #define max_accel 10000 //maximum motor acceleration
 
-int pauseTime = 2500;   //time before robot moves
+int pauseTime = 2500;   //time before robot moves in ms
 int stepTime = 500;     //delay time between high and low on step pin
 int wait_time = 3000;   //delay for printing data
 
-#define TRACKWIDTH 216   //distance between the wheels
+#define TRACKWIDTH 216   //distance between the wheels in mm
 #define MOVE_VEL 100     //velocity of movement, mm/s
 #define ROT_VEL 1     //velocity of movement, rad/s
 
@@ -427,8 +427,10 @@ float closestto0(float a, float b) {
   return b;
 }
 
-
-// Move:
+/*
+The move command moves the robot a requested linear distance and angular distance
+The velocity is restricted to the slowest of the linear velocity or angular velocity
+*/
 void move(float lindist, float angdist, float linvel, float angvel){
   // if the signs don't agree, make them agree
   if((lindist<0)!=(linvel<0)) linvel = -linvel;
@@ -438,19 +440,21 @@ void move(float lindist, float angdist, float linvel, float angvel){
   if(lindist==0) linvel=0;
   if(angdist==0) angvel=0;
 
-  if((lindist!=0 && linvel==0) || (angdist!=0 && angvel==0)){
+  if((lindist!=0 && linvel==0) || (angdist!=0 && angvel==0)){ //If told to move at 0 veloicty, don't run
     return;
   }
 
+  //add linear and angular distances and convert to motor steps
   float steps1 = distanceToSteps(lindist) - radiansToSteps(angdist);
   float steps2 = distanceToSteps(lindist) + radiansToSteps(angdist);
   //Slow down the faster move so they (linear and rotational moves) finish at the same time
   //skip velocity scaling if either distance is 0
-  if(lindist!=0 && angdist!=0){
+  if(lindist!=0 && angdist!=0){ //If one speed is 0 don't scale to avoid divide by 0
     linvel = closestto0(linvel, lindist / (angdist / angvel));
     angvel = closestto0(angvel, angdist / (lindist / linvel));
   }
   
+  //add linear and angular speeds and convert to motor steps
   float speed1 = distanceToSteps(linvel) - radiansToSteps(angvel);
   float speed2 = distanceToSteps(linvel) + radiansToSteps(angvel);
 
@@ -465,6 +469,8 @@ void move(float lindist, float angdist) {
 /*
   Pivots around one wheel.
   Wheel that spins is determined by the turn amount's sign and if it is to goForward
+
+  Linear distance is set to the half the track width times the arc length
 */
 void pivot(float turnRadians, bool goForward) {
   if(goForward==turnRadians>0)
@@ -483,8 +489,8 @@ void pivot(float turnRadians) {
 
 /*
   Spins in place, turnRadians amount.
-  Both mostors spin, opposite directions.
-  Positive is left
+  Both mostors spin, opposite directions. No linear distance is traveled
+  Positive is counterclockwise
   Blocks until motors are done moving.
 */
 void spin(float turnRadians) {
@@ -495,12 +501,15 @@ void spin(float turnRadians) {
   Drive along a circle.
   circleRadius positive means go around a circle forward, negative is backwards
   turnRadians positive means turning left, negative is right
+
+  Linear distance is set to the circle radius times the arc length
 */
 void turn(float turnRadians, float circleRadius) {
   float dist = circleRadius*turnRadians;
   if(dist<0) dist = -dist;
   move(dist, turnRadians);
 }
+
 /*
   Moves the robot forward, distanceMM milimeters.
   Blocks until motors are done moving.
@@ -529,6 +538,8 @@ void stop() {
   Turns around a full circle.
   Positive diam is going around left, negative is going around right
   Turns the red led on.
+
+  All math is handled by the turn() function
 */
 void moveCircle(float diam) {
   digitalWrite(redLED, HIGH);//turn on red LED
@@ -547,7 +558,6 @@ void moveCircle(float diam) {
 void moveFigure8(float diam) {
   digitalWrite(ylwLED, HIGH);//turn on yellow LED
   moveCircle(diam);
-  // delay(wait_time);
   moveCircle(-diam);
   digitalWrite(ylwLED, LOW);//turn off yellow LED
 }
@@ -558,12 +568,11 @@ void moveFigure8(float diam) {
 */
 void goToAngle(float angleRadians){
   digitalWrite(grnLED, HIGH);//turn on green LED
-  spin(angleRadians);
+  spin(angleRadians); //handles angle logic
   digitalWrite(grnLED, LOW);//turn off green LED
 }
 
 
-// goal: green and yellow
 
 /*
   Points the position in mm.
@@ -611,15 +620,6 @@ void setup()
   Serial.begin(baudrate);     //start serial monitor communication
   Serial.println("Robot starting...Put ON TEST STAND");
   delay(pauseTime); //always wait 2.5 seconds before the robot moves
-
-
-  // digitalWrite(redLED, HIGH);//turn on red LED
-  // digitalWrite(ylwLED, HIGH);//turn on yellow LED
-  // digitalWrite(grnLED, HIGH);//turn on green LED
-  // digitalWrite(bluLED, HIGH);//turn on blue LED
-  // delay(pauseTime); //always wait 2.5 seconds before the robot moves
-  // allOFF();
-
 
   // do the demo function
   demonstration3();
@@ -672,22 +672,6 @@ void demonstration3() {
 
 void loop()
 {
-  //uncomment each function one at a time to see what the code does
-  // move1();//call move back and forth function
-  // move2();//call move back and forth function with AccelStepper library functions
-  // move3();//call move back and forth function with MultiStepper library functions
-  // move4(); //move to target position with 2 different speeds - absolute position
-   //move5(); //move continuously with 2 different speeds
-   // move6(); //move to target position with 2 different speeds - relative position
-  //Uncomment to read Encoder Data (uncomment to read on serial monitor)
-  //print_encoder_data();   //prints encoder data
-
-
-  // demonstration1();
-  // spin(PI);
-  // delay(wait_time); 
-  // stop();
-  // delay(wait_time);
-
+ //loop is not being used because it does not stop
   delay(wait_time);               //wait to move robot or read data
 }
