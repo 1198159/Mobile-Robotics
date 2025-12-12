@@ -1,20 +1,12 @@
-
 /*
-  NOTE:
-   THIS IS THE STANDARD FOR HOW TO PROPERLY COMMENT CODE
-   Header comment has program, name, author name, date created
-   Header comment has brief description of what program does
-   Header comment has list of key functions and variables created with decription
-   There are sufficient in line and block comments in the body of the program
-   Variables and functions have logical, intuitive names
-   Functions are used to improve modularity, clarity, and readability
-***********************************
-  RobotIntro.ino
-  Carlotta Berry 11.21.16
+  Braitenberg-Lab01.ino
+  Ethan Harden
+  Alex Stedman
+  Alex Yim
+  12/12/25
 
-  This program will introduce using the stepper motor library to create motion algorithms for the robot.
-  The motions will be go to angle, go to goal, move in a circle, square, figure eight and teleoperation (stop, forward, spin, reverse, turn)
-  It will also include wireless commmunication for remote control of the robot by using a game controller or serial monitor.
+  This program will introduce using the stepper motor library to create motion algorithms for the robot, for lab 1.
+  The motions will be go to angle, go to goal, move in a circle, square, figure eight and basic movements (stop, forward, spin, reverse, turn)
   The primary functions created are
   moveCircle - given the diameter in inches and direction of clockwise or counterclockwise, move the robot in a circle with that diameter
   moveFigure8 - given the diameter in inches, use the moveCircle() function with direction input to create a Figure 8
@@ -45,6 +37,7 @@
   digital pin 5 - red LED in series with 220 ohm resistor
   digital pin 6 - green LED in series with 220 ohm resistor
   digital pin 7 - yellow LED in series with 220 ohm resistor
+  digital pin 4 - blue LED in series with 220 ohm resistor
 
   digital pin 18 - left encoder pin
   digital pin 19 - right encoder pin
@@ -107,7 +100,7 @@ int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since l
 
 // Helper Functions
 
-//interrupt function to count left encoder tickes
+//interrupt function to count left encoder ticks
 void LwheelSpeed()
 {
   encoder[LEFT] ++;  //count the left wheel encoder interrupts
@@ -119,6 +112,7 @@ void RwheelSpeed()
   encoder[RIGHT] ++; //count the right wheel encoder interrupts
 }
 
+// turns off all 4 leds: red, yellow, gree, blue
 void allOFF(){
   for (int l : leds)
     digitalWrite(l,LOW);
@@ -177,210 +171,6 @@ void print_encoder_data() {
   }
 }
   
-/*function to run both wheels to a position at speed*/
-void runAtSpeedToPosition() {
-  stepperRight.runSpeedToPosition();
-  stepperLeft.runSpeedToPosition();
-}
-
-/*function to run both wheels continuously at a speed*/
-void runAtSpeed ( void ) {
-  while (stepperRight.runSpeed() || stepperLeft.runSpeed()) {
-  }
-}
-
-/*This function, runToStop(), will run the robot until the target is achieved and
-   then stop it.
-*  Controls both motors at the same time, and will wait for both to finish if one finishes first.
-*/
-void runToStop () {
-  
-  bool rightStopped = false;
-  bool leftStopped = false;
-
-  while (true) {
-    if (!stepperRight.run()) {
-      rightStopped = true;
-      stepperRight.stop();//stop right motor
-    }
-    if (!stepperLeft.run()) {
-      leftStopped = true;
-      stepperLeft.stop();//stop ledt motor
-    }
-    if (rightStopped && leftStopped) {
-      return;
-    }
-  }
-}
-
-
-/*
-   The move1() function will move the robot forward one full rotation and backwared on
-   full rotation.  Recall that that there 200 steps in one full rotation or 1.8 degrees per
-   step. This function uses setting the step pins high and low with delays to move. The speed is set by
-   the length of the delay.
-*/
-void move1() {
-  Serial.println("move1 function");
-  digitalWrite(redLED, HIGH);//turn on red LED
-  digitalWrite(grnLED, LOW);//turn off green LED
-  digitalWrite(ylwLED, LOW);//turn off yellow LED
-  digitalWrite(ltDirPin, HIGH); // Enables the motor to move in a particular direction
-  digitalWrite(rtDirPin, HIGH); // Enables the motor to move in a particular direction
-  // Makes 800 pulses for making one full cycle rotation
-  for (int x = 0; x < 800; x++) {
-    digitalWrite(rtStepPin, HIGH);
-    digitalWrite(ltStepPin, HIGH);
-    delayMicroseconds(stepTime);
-    digitalWrite(rtStepPin, LOW);
-    digitalWrite(ltStepPin, LOW);
-    delayMicroseconds(stepTime);
-  }
-  delay(1000); // One second delay
-  digitalWrite(ltDirPin, LOW); // Enables the motor to move in opposite direction
-  digitalWrite(rtDirPin, LOW); // Enables the motor to move in opposite direction
-  // Makes 800 pulses for making one full cycle rotation
-  for (int x = 0; x < 800; x++) {
-    digitalWrite(rtStepPin, HIGH);
-    digitalWrite(ltStepPin, HIGH);
-    delayMicroseconds(stepTime);
-    digitalWrite(rtStepPin, LOW);
-    digitalWrite(ltStepPin, LOW);
-    delayMicroseconds(stepTime);
-  }
-  delay(1000); // One second delay
-}
-
-/*
-   The move2() function will use AccelStepper library functions to move the robot
-   move() is a library function for relative movement to set a target position
-   moveTo() is a library function for absolute movement to set a target position
-   stop() is a library function that causes the stepper to stop as quickly as possible
-   run() is a library function that uses accel and decel to achieve target position, no blocking
-   runSpeed() is a library function that uses constant speed to achieve target position, no blocking
-   runToPosition() is a library function that uses blocking with accel/decel to achieve target position
-   runSpeedToPosition() is a library function that uses constant speed to achieve target posiiton, no blocking
-   runToNewPosition() is a library function that uses blocking with accel/decel to achieve target posiiton
-*/
-void move2() {
-  Serial.println("move2 function");
-  digitalWrite(redLED, LOW);//turn off red LED
-  digitalWrite(grnLED, HIGH);//turn on green LED
-  digitalWrite(ylwLED, LOW);//turn off yellow LED
-  stepperRight.moveTo(800);//move one full rotation forward relative to current position
-  stepperLeft.moveTo(800);//move one full rotation forward relative to current position
-  stepperRight.setSpeed(1000);//set right motor speed
-  stepperLeft.setSpeed(1000);//set left motor speed
-  stepperRight.runSpeedToPosition();//move right motor
-  stepperLeft.runSpeedToPosition();//move left motor
-  runToStop();//run until the robot reaches the target
-  delay(1000); // One second delay
-  stepperRight.moveTo(0);//move one full rotation backward relative to current position
-  stepperLeft.moveTo(0);//move one full rotation backward relative to current position
-  stepperRight.setSpeed(1000);//set right motor speed
-  stepperLeft.setSpeed(1000);//set left motor speed
-  stepperRight.runSpeedToPosition();//move right motor
-  stepperLeft.runSpeedToPosition();//move left motor
-  runToStop();//run until the robot reaches the target
-  delay(1000); // One second delay
-}
-
-/*
-   The move3() function will use the MultiStepper() class to move both motors at once
-   move() is a library function for relative movement to set a target position
-   moveTo() is a library function for absolute movement to set a target position
-   stop() is a library function that causes the stepper to stop as quickly as possible
-   run() is a library function that uses accel and decel to achieve target position, no blocking
-   runSpeed() is a library function that uses constant speed to achieve target position, no blocking
-   runToPosition() is a library function that uses blocking with accel/decel to achieve target position
-   runSpeedToPosition() is a library function that uses constant speed to achieve target posiiton, no blocking
-   runToNewPosition() is a library function that uses blocking with accel/decel to achieve target posiiton
-*/
-void move3() {
-  Serial.println("move3 function");
-  digitalWrite(redLED, LOW);//turn off red LED
-  digitalWrite(grnLED, LOW);//turn off green LED
-  digitalWrite(ylwLED, HIGH);//turn on yellow LED
-  long positions[2]; // Array of desired stepper positions
-  positions[0] = 800;//right motor absolute position
-  positions[1] = 800;//left motor absolute position
-  steppers.moveTo(positions);
-  steppers.runSpeedToPosition(); // Blocks until all are in position
-  delay(1000);//wait one second
-  // Move to a different coordinate
-  positions[0] = 0;//right motor absolute position
-  positions[1] = 0;//left motor absolute position
-  steppers.moveTo(positions);
-  steppers.runSpeedToPosition(); // Blocks until all are in position
-  delay(1000);//wait one second
-}
-
-/*this function will move to target at 2 different speeds - absolute position*/
-void move4() {
-
-  Serial.println("move4 function");
-  int leftPos = 5000;//right motor absolute position
-  int rightPos = 1000;//left motor absolute position
-  int leftSpd = 1000;//right motor speed
-  int rightSpd = 200; //left motor speed
-
-  digitalWrite(redLED, HIGH);//turn on red LED
-  digitalWrite(grnLED, HIGH);//turn on green LED
-  digitalWrite(ylwLED, LOW);//turn off yellow LED
-
-  stepperLeft.moveTo(leftPos);//left motor absolute position
-  stepperRight.moveTo(rightPos);//right motor absolute position
-  stepperLeft.setSpeed(leftSpd);
-  stepperRight.setSpeed(rightSpd);
-  steppers.runSpeedToPosition(); // Blocks until all are in position
-
-  stepperLeft.setCurrentPosition(0);
-  stepperRight.setCurrentPosition(0);
-
-}
-
-/*This function will move continuously at 2 different speeds*/
-void move5() {
-  Serial.println("move5 function");
-  digitalWrite(redLED, LOW);//turn off red LED
-  digitalWrite(grnLED, HIGH);//turn on green LED
-  digitalWrite(ylwLED, HIGH);//turn on yellow LED
-
-  int leftSpd = 1000;//right motor speed
-  int rightSpd = 200; //left motor speed
-
-  stepperLeft.setSpeed(leftSpd);//set left motor speed
-  stepperRight.setSpeed(rightSpd);//set right motor speed
-
-  while(true){
-      runAtSpeed();
-  }
-}
-
-
-/*this function will move to target at 2 different speeds - relative position*/
-void move6() {
-
-  Serial.println("move6 function");
-  int leftPos = 5000;//right motor absolute position
-  int rightPos = 1000;//left motor absolute position
-  int leftSpd = 1000;//right motor speed
-  int rightSpd = 200; //left motor speed
-
-  digitalWrite(redLED, HIGH);//turn on red LED
-  digitalWrite(grnLED, HIGH);//turn on green LED
-  digitalWrite(ylwLED, HIGH);//turn off yellow LED
-
-  //Unomment the next 2 lines for relative movement
-  stepperLeft.move(leftPos);//move left wheel to relative position
-  stepperRight.move(rightPos);//move right wheel to relative position
-
-  stepperLeft.setSpeed(leftSpd);//set left motor speed
-  stepperRight.setSpeed(rightSpd);//set right motor speed
-
-  steppers.runSpeedToPosition(); // Blocks until all are in position
-}
-
 /*
 General purpose function to motor moves (motor positions and velocities)
 */
@@ -397,17 +187,16 @@ void moveMotors(long leftPosition, float leftVelocity, long rightPosition, float
 
   //block until done
   steppers.runSpeedToPosition();
-
-  // runToStop();//run until the robot reaches the target
 }
 /*
-MM to Steps
+distance (MM) to motor steps
 */
 float distanceToSteps(float distance){
   //distance [mm] divided by circumference [mm] (pi times diameter, 85 mm) to steps (mult by should be 200, is 800 for some reason)
   return (distance * 800.0 / (PI*85.0));
 }
-//this is under the assumption that both MOTOR IS BEING DRIVEN
+
+//this is under the assumption that both motors are being driven, radians to motor steps
 float radiansToSteps(float radians){
   //radians*trackwidth is the distance in mm that wheel needs to spin
   return distanceToSteps(radians * TRACKWIDTH / 2);
@@ -667,8 +456,8 @@ void demonstration3() {
   allOFF();
 
   // 3 ft square
-  // square(914.4);
-  // delay(wait_time*3);
+  square(914.4);
+  delay(wait_time*3);
 
   // Go to goal 3', 4' includes go to angle 53 degrees and move forward 5'
   goToGoal(914.4, 1219.2);
