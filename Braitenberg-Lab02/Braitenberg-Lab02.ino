@@ -88,6 +88,9 @@ int wait_time = 3000;   //delay for printing data
 #define MOVE_VEL 100     //velocity of movement, mm/s
 #define ROT_VEL 1     //velocity of movement, rad/s
 
+
+#define RAND_FLOAT_STEP_WIDTH 100     //makes it so you get random to 0.01 place
+
 //define encoder pins
 #define LEFT 0        //left encoder
 #define RIGHT 1       //right encoder
@@ -98,7 +101,43 @@ int lastSpeed[2] = {0, 0};          //variable to hold encoder speed (left, righ
 int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since last reset
 
 
+
+#define frontLdr 8
+#define backLdr 9
+#define leftLdr 10
+#define rightLdr 11
+#define leftSnr 3
+#define rightSnr 4
+
 // Helper Functions
+
+
+
+
+int read_lidar(int pin) {
+  int d;
+  int16_t t = pulseIn(pin, HIGH);
+  d = (t - 1000) * 3 / 40;
+  if (t == 0 || t > 1850 || d < 0) { d = 0; }
+  return d;
+}
+
+// reads a sonar given a pin
+int read_sonar(int pin) {
+  float velocity ((331.5 + 0.6 * (float)(20)) * 100 / 1000000.0);
+  uint16_t distance, pulseWidthUs;
+
+  pinMode(pin, OUTPUT);
+  digitalWrite(pin, LOW);
+  digitalWrite(pin, HIGH);            //Set the trig pin High
+  delayMicroseconds(10);              //Delay of 10 microseconds
+  digitalWrite(pin, LOW);             //Set the trig pin Low
+  pinMode(pin, INPUT);                //Set the pin to input mode
+  pulseWidthUs = pulseIn(pin, HIGH);  //Detect the high level time on the echo pin, the output high level time represents the ultrasonic flight time (unit: us)
+  distance = pulseWidthUs * velocity / 2.0;
+  if (distance < 0 || distance > 50) { distance = 0; }
+  return distance;
+}
 
 //interrupt function to count left encoder ticks
 void LwheelSpeed()
@@ -167,6 +206,30 @@ void print_encoder_data() {
     Serial.println(accumTicks[RIGHT]);
     encoder[LEFT] = 0;                          //clear the left encoder data buffer
     encoder[RIGHT] = 0;                         //clear the right encoder data buffer
+    timer = millis();                           //record current time since program started
+  }
+}
+
+
+//function prints encoder data to serial monitor
+void print_sensor_data() {
+  static unsigned long timer = 0;                           //print manager timer
+  if (millis() - timer > 10000) {                             //print encoder data every 100 ms or so
+
+    Serial.println("------------");
+    Serial.println("Front ir");
+    Serial.println(read_lidar(frontLdr));
+    Serial.println("Right ir");
+    Serial.println(read_lidar(rightLdr));
+    Serial.println("Back ir");
+    Serial.println(read_lidar(backLdr));
+    Serial.println("Left ir");
+    Serial.println(read_lidar(leftLdr));
+    Serial.println("Right sonar");
+    Serial.println(read_sonar(rightSnr));
+    Serial.println("Left sonar");
+    Serial.println(read_sonar(leftSnr));
+
     timer = millis();                           //record current time since program started
   }
 }
@@ -254,6 +317,37 @@ void move(float lindist, float angdist, float linvel, float angvel){
 void move(float lindist, float angdist) {
   move(lindist, angdist, MOVE_VEL, ROT_VEL);
 } 
+
+
+void updateMotors() {
+  stepperLeft.runSpeed();
+  stepperRight.runSpeed();
+}
+
+// sets speeds, need to call updateMotors() rapeatedly after
+// doesn't limit the speeds, so be careful of moving too fast
+void moveVelo(float linvel, float angvel){
+
+  //add linear and angular distances and convert to motor steps
+  // float steps1 = distanceToSteps(lindist) - radiansToSteps(angdist);
+  // float steps2 = distanceToSteps(lindist) + radiansToSteps(angdist);
+  //Slow down the faster move so they (linear and rotational moves) finish at the same time
+  //skip velocity scaling if either distance is 0
+  // if(lindist!=0 && angdist!=0){ //If one speed is 0 don't scale to avoid divide by 0
+  //   linvel = closestto0(linvel, lindist / (angdist / angvel));
+  //   angvel = closestto0(angvel, angdist / (lindist / linvel));
+  // }
+  
+  //add linear and angular speeds and convert to motor steps
+  float speed1 = distanceToSteps(linvel) - radiansToSteps(angvel);
+  float speed2 = distanceToSteps(linvel) + radiansToSteps(angvel);
+
+  // moveMotors(steps1, speed1, steps2, speed2);
+  stepperLeft.setSpeed(speed1);//set left motor speed
+  stepperRight.setSpeed(speed2);//set right motor speed
+  
+
+}
 
 /*
   Pivots around one wheel.
@@ -396,6 +490,8 @@ void square(float len) {
   digitalWrite(grnLED, LOW);//keep off green LED
 }
 
+unsigned long lastRandomWanderTime = 0;
+
 //// MAIN
 void setup()
 {
@@ -405,69 +501,81 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(ltEncoder), LwheelSpeed, CHANGE);    //init the interrupt mode for the left encoder
   attachInterrupt(digitalPinToInterrupt(rtEncoder), RwheelSpeed, CHANGE);   //init the interrupt mode for the right encoder
 
+  randomSeed(analogRead(0)); //analog0 is not connected, so use noise to set the seed
+
 
   Serial.begin(baudrate);     //start serial monitor communication
-  Serial.println("Robot starting...Put ON TEST STAND");
   delay(pauseTime); //always wait 2.5 seconds before the robot moves
-
-  // do the demo function
-  // demonstration3();
+  Serial.println("Robot starting...Put ON TEST STAND");
 }
 
-// does the lab1 demo, part 1
-// basic movements
-void demonstration1() {
-  forward(400); //forward 200mm
-  delay(wait_time);
-  reverse(200); //backward 200mm
-  delay(wait_time);
 
-  pivot(PI/2); //pivot forward on left wheel, 90degrees
-  delay(wait_time);
-  pivot(-PI/2); //pivot forward on right wheel, 90degrees
-  delay(wait_time);
+float randFloat(float low, float high){
+  return random(low*RAND_FLOAT_STEP_WIDTH, high*RAND_FLOAT_STEP_WIDTH) * 1.0f / RAND_FLOAT_STEP_WIDTH;
+}
 
-  turn(PI/2, 200); //turn forward, left, around a 200mm radius circle, 90degrees of the circle
-  delay(wait_time);
-  turn(-PI/2, 200); //turn forward, right, around a 200mm radius circle, 90degrees of the circle
-  delay(wait_time);
 
-  spin(PI/2); //spin in place left, 90degrees
-  delay(wait_time);
-  spin(-PI/2); //spin in place right, 90degrees
-  delay(wait_time);
+#define ROUGH_RANDOM_WANDER_FORWARD_BIAS 3            //prefer going forwards this many times as much as going backwards
+#define SMOOTH_RANDOM_WANDER_FORWARD_BIAS 2            //prefer going forwards this many times as much as going backwards
+
+
+void setRandomWanderLeds() {
+  digitalWrite(redLED, LOW);
+  digitalWrite(ylwLED, LOW);
+  digitalWrite(grnLED, HIGH);
+  digitalWrite(bluLED, LOW);
+}
+
+void roughRandomWander() {
+  setRandomWanderLeds();
+  if((millis() - lastRandomWanderTime) >= 2000){
+    moveVelo(randFloat(-50, ROUGH_RANDOM_WANDER_FORWARD_BIAS*50), randFloat(-ROT_VEL, ROT_VEL));
+
+    lastRandomWanderTime = millis();
+  } //end if
+}
+
+
+void alwaysForwardRandomWander() {
+  setRandomWanderLeds();
+  if((millis() - lastRandomWanderTime) >= 1000){
+    moveVelo(MOVE_VEL, randFloat(-ROT_VEL, ROT_VEL));
+
+    lastRandomWanderTime = millis();
+  } //end if
+}
+
+
+float smoothRandomWanderLinVel = 0;
+float smoothRandomWanderAngVel = 0;
+void smoothRandomWander(){
+  setRandomWanderLeds();
+  if((millis() - lastRandomWanderTime) >= 10){
+    smoothRandomWanderLinVel+=randFloat(-20, SMOOTH_RANDOM_WANDER_FORWARD_BIAS*20);
+    smoothRandomWanderAngVel+=randFloat(-0.2, 0.2);
+
+    if(smoothRandomWanderLinVel>MOVE_VEL)smoothRandomWanderLinVel=MOVE_VEL;
+    if(-smoothRandomWanderLinVel>MOVE_VEL)smoothRandomWanderLinVel=-MOVE_VEL;
+    if(smoothRandomWanderAngVel>ROT_VEL)smoothRandomWanderAngVel=ROT_VEL;
+    if(-smoothRandomWanderAngVel>ROT_VEL)smoothRandomWanderAngVel=-ROT_VEL;
+
+    moveVelo(smoothRandomWanderLinVel, smoothRandomWanderAngVel);
   
-}
-
-// does the lab1 demo, part 2
-// circle and figure eight
-void demonstration2() {
-  allOFF();
-  moveCircle(-914); //move right around a 3ft diameter circle
-  
-  delay(wait_time);
-
-  moveFigure8(914); //move left then right two 3ft diameter circles
-}
-
-// does the lab1 demo, part 3
-// gotogoal which includes gotoangle
-void demonstration3() {
-  allOFF();
-
-  // 3 ft square
-  square(914.4);
-  delay(wait_time*3);
-
-  // Go to goal 3', 4' includes go to angle 53 degrees and move forward 5'
-  goToGoal(914.4, 1219.2);
-  delay(wait_time*3);
-  goToGoal(-609.6, -609.6);
+    lastRandomWanderTime = millis();
+  } //end if
 }
 
 void loop()
 {
- //loop is not being used because it does not stop
-  delay(wait_time/10);               //wait to move robot or read data
-  print_encoder_data();
-}
+
+  print_sensor_data();
+    
+  // for now, only random wander, resetting where it wants to go every so often
+  // roughRandomWander();
+  // alwaysForwardRandomWander();
+  // smoothRandomWander();
+  
+
+  updateMotors();
+} //end loop
+
