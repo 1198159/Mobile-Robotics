@@ -57,6 +57,14 @@
 #include <MultiStepper.h>//include multiple stepper motor library
 #include "RPC.h" //for other core
 
+
+//imu
+#include <MPU6050.h> 
+#include <I2Cdev.h>
+#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+    #include "Wire.h"
+#endif
+
 //state LEDs connections
 #define redLED 5            //red LED for displaying states
 #define grnLED 6            //green LED for displaying states
@@ -107,8 +115,10 @@ int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since l
 #define backLdr 9
 #define leftLdr 10
 #define rightLdr 11
+
 #define leftSnr 2
 #define rightSnr 3
+
 #define numLidars 4
 #define numSonars 2
 int lidars[numLidars] = {frontLdr, backLdr, leftLdr, rightLdr};
@@ -120,11 +130,16 @@ uint8_t lidarStates[numLidars] = {0, 0, 0, 0}; //either 0 (low) or 1 (high)
 int sonars[numSonars] = {leftSnr, rightSnr};
 unsigned long sonarTimes[numSonars] = {0, 0};
 
-#define sonarTriggerDelay 30 // example code had 10, 30 works better: for how long the trigger is
-#define sonarAfterReadDelay 20000 //higher number means less interference between the two sonars, lower number means more frequent sensor reads
+#define sonarTriggerDelay 10 // example code had 10, 30 works better: for how long the trigger is
+#define sonarAfterReadDelay 2000 //higher number means less interference between the two sonars, lower number means more frequent sensor reads
 #define sonarStartTimeout 40000
 int sonarStates[numSonars] = {0, 0};//0: do trigger start, 1: waiting sonarTriggerDelay micros, 2: reading, 3: waiting sonarAfterReadDelay micros
 
+
+// imu
+MPU6050 accelgyro;
+int16_t ax, ay, az;
+int16_t gx, gy, gz;
 
 // Helper Functions
 
@@ -176,6 +191,15 @@ float sonarTimeToDist(float t){
 void setupM4() {
   RPC.bind("read_lidars", read_lidars);  // bind a method to return the lidar data all at once
   RPC.bind("read_sonars", read_sonars);  // bind a method to return the sonar data all at once
+
+  // imu
+  #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+      Wire.begin();
+  #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
+      Fastwire::setup(400, true);
+  #endif
+
+  accelgyro.initialize();
 }
 
 // for readLidar and readSonar
@@ -206,6 +230,8 @@ bool readSonar(int m4SonarIndex){
   if(sonarStates[m4SonarIndex]==4 && (sonarTimes[m4SonarIndex]+sonarAfterReadDelay<=micros())){
     // done waiting after read, able to start the trigger
     sonarStates[m4SonarIndex] = 0;
+    // pinMode(sonars[m4SonarIndex], OUTPUT);
+    // digitalWrite(sonars[m4SonarIndex], LOW);
   }
 
   if(sonarStates[m4SonarIndex]==3 && !read){
@@ -226,7 +252,7 @@ bool readSonar(int m4SonarIndex){
       // give up read
       sonarStates[m4SonarIndex] = 4;
       sonarTimes[m4SonarIndex] = micros();
-      dist2arr[m4SonarIndex] = 1000;
+      // dist2arr[m4SonarIndex] = 1000;
       return true;
     }
   }
@@ -260,7 +286,18 @@ void loopM4() {
   for(int m4LidarIndex=0; m4LidarIndex<numLidars; m4LidarIndex++){
     readLidar(m4LidarIndex);
   }
-  
+
+  // imu
+  // accelgyro.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+
+  // dist1arr[0] = ax;
+  // dist1arr[1] = ay;
+  // dist1arr[2] = az;
+  // dist1arr[3] = gx;
+  // dist2arr[0] = gy;
+  // dist2arr[1] = gz;
+
+  // delay(100);
   // the two sonars can interfere with eachother, so they can't be read at the same time
   static int m4SonarIndex=0;
   if(readSonar(m4SonarIndex)) m4SonarIndex++;
