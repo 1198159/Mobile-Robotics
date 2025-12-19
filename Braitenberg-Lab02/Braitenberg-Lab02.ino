@@ -55,6 +55,7 @@
 #include <Arduino.h>//include for PlatformIO Ide
 #include <AccelStepper.h>//include the stepper motor library
 #include <MultiStepper.h>//include multiple stepper motor library
+#include "RPC.h" //for other core
 
 //state LEDs connections
 #define redLED 5            //red LED for displaying states
@@ -106,49 +107,143 @@ int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since l
 #define backLdr 9
 #define leftLdr 10
 #define rightLdr 11
-#define leftSnr 3
-#define rightSnr 4
+#define leftSnr 2
+#define rightSnr 3
+#define numLidars 4
+#define numSonars 2
+int lidars[numLidars] = {frontLdr, backLdr, leftLdr, rightLdr};
+int sonars[numSonars] = {leftSnr, rightSnr};
+
 
 // Helper Functions
 
 
 
+// a struct to hold lidar data
+struct lidar {
+  // this can easily be extended to contain sonar data as well
+  float front;
+  float back;
+  float left;
+  float right;
+  // this defines some helper functions that allow RPC to send our struct (I found this on a random forum)
+  MSGPACK_DEFINE_ARRAY(front, back, left, right);  //https://stackoverflow.com/questions/37322145/msgpack-to-pack-structures https://www.appsloveworld.com/cplus/100/391/msgpack-to-pack-structures
+} dist;
 
-int read_lidar(int pin) {
-  int d;
-  int16_t t = pulseIn(pin, HIGH);
-  d = (t - 1000) * 3 / 40;
-  if (t == 0 || t > 1850 || d < 0) { d = 0; }
+
+// a struct to hold lidar data
+struct sonar {
+  // this can easily be extended to contain sonar data as well
+  float left;
+  float right;
+  // this defines some helper functions that allow RPC to send our struct (I found this on a random forum)
+  MSGPACK_DEFINE_ARRAY(left, right);  //https://stackoverflow.com/questions/37322145/msgpack-to-pack-structures https://www.appsloveworld.com/cplus/100/391/msgpack-to-pack-structures
+} dist2;
+
+// read_lidars is the function used to get lidar data to the M7
+struct lidar read_lidars() {
+  return dist;
+}
+
+// read_lidars is the function used to get lidar data to the M7
+struct sonar read_sonars() {
+  return dist2;
+}
+
+// how long each sensor type gets time for
+#define sonarTime 5000
+#define lidarTime 40000
+
+// reads a lidar given a pin
+float read_lidar(int pin) {
+  float d;
+  unsigned long t = pulseIn(pin, HIGH, lidarTime);
+  d = (t - 1000.0f) * 3.0f / 40.0f;
+  // if (t == 0 || t > 1850 || d < 0) { d = 0; }
   return d;
 }
 
 // reads a sonar given a pin
-int read_sonar(int pin) {
-  float velocity ((331.5 + 0.6 * (float)(20)) * 100 / 1000000.0);
-  uint16_t distance, pulseWidthUs;
+float read_sonar(int pin) {
+  float velocity ((331.5f + 0.6f * 20) * 100 / 1000000.0);
+  unsigned long pulseWidthUs;
+  float distance;
 
   pinMode(pin, OUTPUT);
   digitalWrite(pin, LOW);
   digitalWrite(pin, HIGH);            //Set the trig pin High
-  delayMicroseconds(10);              //Delay of 10 microseconds
+  delayMicroseconds(30);              //Delay of 10 microseconds
   digitalWrite(pin, LOW);             //Set the trig pin Low
   pinMode(pin, INPUT);                //Set the pin to input mode
-  pulseWidthUs = pulseIn(pin, HIGH);  //Detect the high level time on the echo pin, the output high level time represents the ultrasonic flight time (unit: us)
+  pulseWidthUs = pulseIn(pin, HIGH, sonarTime);  //Detect the high level time on the echo pin, the output high level time represents the ultrasonic flight time (unit: us)
   distance = pulseWidthUs * velocity / 2.0;
-  if (distance < 0 || distance > 50) { distance = 0; }
+  // if (distance < 0 || distance > 50) { distance = 0; }
   return distance;
 }
 
+//set up the M4 (coprocessor) to be sensor server
+void setupM4() {
+  RPC.bind("read_lidars", read_lidars);  // bind a method to return the lidar data all at once
+  RPC.bind("read_sonars", read_sonars);  // bind a method to return the sonar data all at once
+}
+
+//poll the M4 (coprocessor) to read the sensor data
+unsigned long nextM4SonarTime = 0;
+unsigned long nextM4LidarTime = 100;
+int m4SonarIndex = 0;
+int m4LidarIndex = 0;
+float* dist1arr = &dist.front;
+float* dist2arr = &dist2.left;
+void loopM4() {
+  // update the struct with current lidar data
+  if(micros()>nextM4SonarTime){
+    dist2arr[m4SonarIndex] = read_sonar(sonars[m4SonarIndex]);
+    m4SonarIndex++;
+    if(m4SonarIndex==numSonars) m4SonarIndex=0;
+  
+    nextM4SonarTime+=sonarTime<<1;
+  }
+
+  if(micros()>nextM4LidarTime){
+    dist1arr[m4LidarIndex] = read_lidar(lidars[m4LidarIndex]);
+    m4LidarIndex++;
+    if(m4LidarIndex==numLidars) m4LidarIndex=0;
+    
+    nextM4LidarTime+=lidarTime<<1;
+  }
+}
+
+void printSensorData() {
+  struct lidar data = RPC.call("read_lidars").as<struct lidar>();
+  struct sonar data2 = RPC.call("read_sonars").as<struct sonar>();
+  // print lidar data
+  Serial.print("lidar:   f ");
+  Serial.print(data.front);
+  Serial.print(", \t  b ");
+  Serial.print(data.back);
+  Serial.print(", \t  l ");
+  Serial.print(data.left);
+  Serial.print(", \t  r ");
+  Serial.print(data.right);
+  Serial.print("\t\tsonar:   l ");
+  Serial.print(data2.left);
+  Serial.print(", \t  r ");
+  Serial.print(data2.right);
+  Serial.println();
+}
+
+// loop() is never called as setup() never returns
+// this may need to be modified to run the state machine.
+// consider usingnamespace rtos Threads as seen in previous example
+void loop() {}
+
+
 //interrupt function to count left encoder ticks
-void LwheelSpeed()
-{
-  encoder[LEFT] ++;  //count the left wheel encoder interrupts
+void LwheelSpeed() { encoder[LEFT] ++;  //count the left wheel encoder interrupts
 }
 
 //interrupt function to count right encoder ticks
-void RwheelSpeed()
-{
-  encoder[RIGHT] ++; //count the right wheel encoder interrupts
+void RwheelSpeed() { encoder[RIGHT] ++; //count the right wheel encoder interrupts
 }
 
 // turns off all 4 leds: red, yellow, gree, blue
@@ -187,7 +282,7 @@ void init_stepper(){
 }
 
 //function prints encoder data to serial monitor
-void print_encoder_data() {
+void printEncoderData() {
   static unsigned long timer = 0;                           //print manager timer
   if (millis() - timer > 100) {                             //print encoder data every 100 ms or so
     lastSpeed[LEFT] = encoder[LEFT];                        //record the latest left speed value
@@ -206,30 +301,6 @@ void print_encoder_data() {
     Serial.println(accumTicks[RIGHT]);
     encoder[LEFT] = 0;                          //clear the left encoder data buffer
     encoder[RIGHT] = 0;                         //clear the right encoder data buffer
-    timer = millis();                           //record current time since program started
-  }
-}
-
-
-//function prints encoder data to serial monitor
-void print_sensor_data() {
-  static unsigned long timer = 0;                           //print manager timer
-  if (millis() - timer > 10000) {                             //print encoder data every 100 ms or so
-
-    Serial.println("------------");
-    Serial.println("Front ir");
-    Serial.println(read_lidar(frontLdr));
-    Serial.println("Right ir");
-    Serial.println(read_lidar(rightLdr));
-    Serial.println("Back ir");
-    Serial.println(read_lidar(backLdr));
-    Serial.println("Left ir");
-    Serial.println(read_lidar(leftLdr));
-    Serial.println("Right sonar");
-    Serial.println(read_sonar(rightSnr));
-    Serial.println("Left sonar");
-    Serial.println(read_sonar(leftSnr));
-
     timer = millis();                           //record current time since program started
   }
 }
@@ -324,7 +395,7 @@ void updateMotors() {
   stepperRight.runSpeed();
 }
 
-// sets speeds, need to call updateMotors() rapeatedly after
+// nonblocking, sets speeds, need to call updateMotors() rapeatedly after
 // doesn't limit the speeds, so be careful of moving too fast
 void moveVelo(float linvel, float angvel){
 
@@ -492,22 +563,6 @@ void square(float len) {
 
 unsigned long lastRandomWanderTime = 0;
 
-//// MAIN
-void setup()
-{
-  int baudrate = 9600; //serial monitor baud rate'
-  init_stepper(); //set up stepper motor
-
-  attachInterrupt(digitalPinToInterrupt(ltEncoder), LwheelSpeed, CHANGE);    //init the interrupt mode for the left encoder
-  attachInterrupt(digitalPinToInterrupt(rtEncoder), RwheelSpeed, CHANGE);   //init the interrupt mode for the right encoder
-
-  randomSeed(analogRead(0)); //analog0 is not connected, so use noise to set the seed
-
-
-  Serial.begin(baudrate);     //start serial monitor communication
-  delay(pauseTime); //always wait 2.5 seconds before the robot moves
-  Serial.println("Robot starting...Put ON TEST STAND");
-}
 
 
 float randFloat(float low, float high){
@@ -565,17 +620,48 @@ void smoothRandomWander(){
   } //end if
 }
 
-void loop()
-{
 
-  print_sensor_data();
+//// MAIN
+//set up M7 (main processor) client to request sensor data
+void setupM7() {
+  int baudrate = 9600; //serial monitor baud rate'
+  init_stepper(); //set up stepper motor
+
+  attachInterrupt(digitalPinToInterrupt(ltEncoder), LwheelSpeed, CHANGE);    //init the interrupt mode for the left encoder
+  attachInterrupt(digitalPinToInterrupt(rtEncoder), RwheelSpeed, CHANGE);   //init the interrupt mode for the right encoder
+
+  randomSeed(analogRead(0)); //analog0 is not connected, so use noise to set the seed
+
+
+  Serial.begin(baudrate);     //start serial monitor communication
+  delay(pauseTime); //always wait 2.5 seconds before the robot moves
+  Serial.println("Robot starting...Put ON TEST STAND");
+}
+
+void loopM7() {
+
+  printSensorData();
     
   // for now, only random wander, resetting where it wants to go every so often
   // roughRandomWander();
-  // alwaysForwardRandomWander();
+  alwaysForwardRandomWander();
   // smoothRandomWander();
   
 
   updateMotors();
 } //end loop
 
+
+//setup function w/infinite loops to send/recv data
+void setup() {
+  RPC.begin();
+  if (HAL_GetCurrentCPUID() == CM7_CPUID) {
+    // if on M7 CPU, run M7 setup & loop
+    setupM7();
+    while (1) loopM7();
+  } else {
+    // if on M4 CPU, run M4 setup & loop
+    setupM4();
+    while (1) loopM4();
+  }
+}
