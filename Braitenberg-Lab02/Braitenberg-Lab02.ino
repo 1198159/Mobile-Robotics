@@ -112,7 +112,18 @@ int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since l
 #define numLidars 4
 #define numSonars 2
 int lidars[numLidars] = {frontLdr, backLdr, leftLdr, rightLdr};
+unsigned long lidarRisingTimes[numLidars] = {0, 0, 0, 0};
+uint8_t lidarStates[numLidars] = {0, 0, 0, 0}; //either 0 (low) or 1 (high)
+
+
+
 int sonars[numSonars] = {leftSnr, rightSnr};
+unsigned long sonarTimes[numSonars] = {0, 0};
+
+#define sonarTriggerDelay 30 // example code had 10, 30 works better: for how long the trigger is
+#define sonarAfterReadDelay 20000 //higher number means less interference between the two sonars, lower number means more frequent sensor reads
+#define sonarStartTimeout 40000
+int sonarStates[numSonars] = {0, 0};//0: do trigger start, 1: waiting sonarTriggerDelay micros, 2: reading, 3: waiting sonarAfterReadDelay micros
 
 
 // Helper Functions
@@ -150,36 +161,16 @@ struct sonar read_sonars() {
   return dist2;
 }
 
-// how long each sensor type gets time for
-#define sonarTime 5000
-#define lidarTime 40000
-
-// reads a lidar given a pin
-float read_lidar(int pin) {
-  float d;
-  unsigned long t = pulseIn(pin, HIGH, lidarTime);
-  d = (t - 1000.0f) * 3.0f / 40.0f;
-  // if (t == 0 || t > 1850 || d < 0) { d = 0; }
-  return d;
+// micros to some unit (probably inches)
+float lidarTimeToDist(float t) {
+  return (t - 1000.0f) * 3.0f / 40.0f;
 }
 
-// reads a sonar given a pin
-float read_sonar(int pin) {
-  float velocity ((331.5f + 0.6f * 20) * 100 / 1000000.0);
-  unsigned long pulseWidthUs;
-  float distance;
-
-  pinMode(pin, OUTPUT);
-  digitalWrite(pin, LOW);
-  digitalWrite(pin, HIGH);            //Set the trig pin High
-  delayMicroseconds(30);              //Delay of 10 microseconds
-  digitalWrite(pin, LOW);             //Set the trig pin Low
-  pinMode(pin, INPUT);                //Set the pin to input mode
-  pulseWidthUs = pulseIn(pin, HIGH, sonarTime);  //Detect the high level time on the echo pin, the output high level time represents the ultrasonic flight time (unit: us)
-  distance = pulseWidthUs * velocity / 2.0;
-  // if (distance < 0 || distance > 50) { distance = 0; }
-  return distance;
+// micros to some unit (probably inches)
+float sonarTimeToDist(float t){
+  return t * ((331.5f + 0.6f * 20) * 100 / 1000000.0) / 2;
 }
+
 
 //set up the M4 (coprocessor) to be sensor server
 void setupM4() {
@@ -187,30 +178,93 @@ void setupM4() {
   RPC.bind("read_sonars", read_sonars);  // bind a method to return the sonar data all at once
 }
 
-//poll the M4 (coprocessor) to read the sensor data
-unsigned long nextM4SonarTime = 0;
-unsigned long nextM4LidarTime = 100;
-int m4SonarIndex = 0;
-int m4LidarIndex = 0;
+// for readLidar and readSonar
 float* dist1arr = &dist.front;
 float* dist2arr = &dist2.left;
-void loopM4() {
-  // update the struct with current lidar data
-  if(micros()>nextM4SonarTime){
-    dist2arr[m4SonarIndex] = read_sonar(sonars[m4SonarIndex]);
-    m4SonarIndex++;
-    if(m4SonarIndex==numSonars) m4SonarIndex=0;
-  
-    nextM4SonarTime+=sonarTime<<1;
+
+// lidar is easier
+void readLidar(int m4LidarIndex){
+  int state = digitalRead(lidars[m4LidarIndex]);
+    if(lidarStates[m4LidarIndex] ^ state){ //xor: not the same
+      if(state) {
+        // rising edge
+        lidarRisingTimes[m4LidarIndex] = micros();
+      } else {
+        // falling edge
+        dist1arr[m4LidarIndex] = lidarTimeToDist(micros()-lidarRisingTimes[m4LidarIndex]);
+      }
+    }
+    lidarStates[m4LidarIndex] = state;
+}
+
+// sonar is harder because the pin is used for triggering and reading
+// sonarStates:  0: do trigger start, 1: waiting sonarTriggerDelay micros, 2: waiting for read to start, 3: reading, 4: waiting sonarAfterReadDelay micros
+// returns true if the next (the other because there is only 2) sonar should be read
+bool readSonar(int m4SonarIndex){
+  int read = digitalRead(sonars[m4SonarIndex]);
+
+  if(sonarStates[m4SonarIndex]==4 && (sonarTimes[m4SonarIndex]+sonarAfterReadDelay<=micros())){
+    // done waiting after read, able to start the trigger
+    sonarStates[m4SonarIndex] = 0;
   }
 
-  if(micros()>nextM4LidarTime){
-    dist1arr[m4LidarIndex] = read_lidar(lidars[m4LidarIndex]);
-    m4LidarIndex++;
-    if(m4LidarIndex==numLidars) m4LidarIndex=0;
-    
-    nextM4LidarTime+=lidarTime<<1;
+  if(sonarStates[m4SonarIndex]==3 && !read){
+    // end of read
+    dist2arr[m4SonarIndex] = sonarTimeToDist(micros()-sonarTimes[m4SonarIndex]);
+    sonarStates[m4SonarIndex] = 4;
+    sonarTimes[m4SonarIndex] = micros();
+
+    return true;
   }
+
+  if(sonarStates[m4SonarIndex]==2){
+    if(read){
+      // start of read
+      sonarStates[m4SonarIndex] = 3;
+      sonarTimes[m4SonarIndex] = micros();
+    } else if(sonarTimes[m4SonarIndex]+sonarStartTimeout<=micros()) {
+      // give up read
+      sonarStates[m4SonarIndex] = 4;
+      sonarTimes[m4SonarIndex] = micros();
+      dist2arr[m4SonarIndex] = 1000;
+      return true;
+    }
+  }
+
+  if(sonarStates[m4SonarIndex]==1 && (sonarTimes[m4SonarIndex]+sonarTriggerDelay<=micros())){
+    // finish trigger, start read
+    digitalWrite(sonars[m4SonarIndex], LOW);
+    pinMode(sonars[m4SonarIndex], INPUT);
+    sonarStates[m4SonarIndex] = 2;
+    sonarTimes[m4SonarIndex] = micros();
+  }
+
+  if(sonarStates[m4SonarIndex]==0){
+    // start trigger
+    pinMode(sonars[m4SonarIndex], OUTPUT);
+    digitalWrite(sonars[m4SonarIndex], LOW);
+    digitalWrite(sonars[m4SonarIndex], HIGH);
+    sonarStates[m4SonarIndex] = 1;
+    sonarTimes[m4SonarIndex] = micros();
+  }
+
+  return sonarStates[m4SonarIndex]==4 || sonarStates[m4SonarIndex]==2; 
+
+  // also returns true at end of read or give up
+}
+
+//poll the M4 (coprocessor) to read the sensor data
+void loopM4() {
+
+  // the lidars don't interfere, they all can be read at the same time  
+  for(int m4LidarIndex=0; m4LidarIndex<numLidars; m4LidarIndex++){
+    readLidar(m4LidarIndex);
+  }
+  
+  // the two sonars can interfere with eachother, so they can't be read at the same time
+  static int m4SonarIndex=0;
+  if(readSonar(m4SonarIndex)) m4SonarIndex++;
+  if(m4SonarIndex==numSonars) m4SonarIndex=0;
 }
 
 void printSensorData() {
@@ -245,6 +299,8 @@ void LwheelSpeed() { encoder[LEFT] ++;  //count the left wheel encoder interrupt
 //interrupt function to count right encoder ticks
 void RwheelSpeed() { encoder[RIGHT] ++; //count the right wheel encoder interrupts
 }
+
+//interrupt function for lidar
 
 // turns off all 4 leds: red, yellow, gree, blue
 void allOFF(){
