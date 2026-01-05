@@ -125,6 +125,7 @@ int lidars[numLidars] = {frontLdr, backLdr, leftLdr, rightLdr};
 unsigned long lidarRisingTimes[numLidars] = {0, 0, 0, 0};
 #define lidarDisconnectTimeout 40000
 uint8_t lidarStates[numLidars] = {0, 0, 0, 0}; //either 0 (low) or 1 (high)
+#define LIDAR_FAR_THRESH 60
 
 
 int sonars[numSonars] = {leftSnr, rightSnr};
@@ -235,25 +236,35 @@ void setupM4() {
 // lidar is easier
 void readLidar(int m4LidarIndex){
   int state = digitalRead(lidars[m4LidarIndex]);
-    if(lidarStates[m4LidarIndex] ^ state){ //xor: not the same
-      if(state) {
-        //now high: rising edge
-        lidarRisingTimes[m4LidarIndex] = micros();
-      } else {
-        // falling edge
-        dist1arr[m4LidarIndex] = lidarTimeToDist(micros()-lidarRisingTimes[m4LidarIndex]);
+  bool noRead = false;
+  if(lidarStates[m4LidarIndex] ^ state){ //xor: not the same
+    if(state) {
+      //now high: rising edge
+      lidarRisingTimes[m4LidarIndex] = micros();
+    } else {
+      // falling edge
+      float dist = lidarTimeToDist(micros()-lidarRisingTimes[m4LidarIndex]);
+      if(dist<LIDAR_FAR_THRESH) {
+        dist1arr[m4LidarIndex] = dist;
         timesNoRead1arr[m4LidarIndex] = 0;
-      }
-    } else if(lidarRisingTimes[m4LidarIndex]+lidarDisconnectTimeout<=micros()){ //no change for too long
-      // get a strike, but don't change any pins to give up read, also not resetting the timer so this gets all strikes pretty quickly
-      if(timesNoRead1arr[m4LidarIndex] == TIMES_NO_READ_THRES) {
-        dist1arr[m4LidarIndex] = NO_READ_DIST;
       } else {
-        timesNoRead1arr[m4LidarIndex]++;
+        noRead = true;
       }
     }
+  } else if(lidarRisingTimes[m4LidarIndex]+lidarDisconnectTimeout<=micros()){ //no change for too long
+    // get a strike, but don't change any pins to give up read, also not resetting the timer so this gets all strikes pretty quickly
+    noRead = true;
+  }
 
-    lidarStates[m4LidarIndex] = state;
+  if(noRead) {
+    if(timesNoRead1arr[m4LidarIndex] == TIMES_NO_READ_THRES) {
+      dist1arr[m4LidarIndex] = NO_READ_DIST;
+    } else {
+      timesNoRead1arr[m4LidarIndex]++;
+    }
+  }
+
+  lidarStates[m4LidarIndex] = state;
 }
 
 // sonar is harder because the pin is used for triggering and reading
@@ -345,9 +356,13 @@ void loopM4() {
   if(m4SonarIndex==numSonars) m4SonarIndex=0;
 }
 
-void printSensorData() {
-  struct lidar data = RPC.call("read_lidars").as<struct lidar>();
-  struct sonar data2 = RPC.call("read_sonars").as<struct sonar>();
+
+void readSensorData(struct lidar& data, struct sonar& data2) {
+  data = RPC.call("read_lidars").as<struct lidar>();
+  data2 = RPC.call("read_sonars").as<struct sonar>();
+}
+
+void printSensorData(struct lidar& data, struct sonar& data2) {
   // print lidar data
   Serial.print("lidar:   f ");
   Serial.print(data.front);
@@ -357,7 +372,7 @@ void printSensorData() {
   Serial.print(data.left);
   Serial.print(", \t  r ");
   Serial.print(data.right);
-  Serial.print("\t\tsonar:   l ");
+  Serial.print("\t |\tsonar:   l ");
   Serial.print(data2.left);
   Serial.print(", \t  r ");
   Serial.print(data2.right);
@@ -532,6 +547,8 @@ void updateMotors() {
 // nonblocking, sets speeds, need to call updateMotors() rapeatedly after
 // doesn't limit the speeds, so be careful of moving too fast
 void moveVelo(float linvel, float angvel){
+
+  digitalWrite(stepperEnable, linvel==0 && angvel==0);//turns off the stepper motor driver to stop the terrible whining noise when not trying to move
 
   //add linear and angular distances and convert to motor steps
   // float steps1 = distanceToSteps(lindist) - radiansToSteps(angdist);
@@ -734,6 +751,109 @@ void alwaysForwardRandomWander() {
   } //end if
 }
 
+#define SENSOR_HISTORY 150
+int historyIndex = 0;
+struct lidar history1[SENSOR_HISTORY];
+struct sonar history2[SENSOR_HISTORY];
+struct lidar max1; //would min and max just be noise?
+struct sonar max2;
+struct lidar min1;
+struct sonar min2;
+struct lidar avg1; //if we were just doing avg, could do it more efficiently: change avg by (new value-old value)/history
+struct sonar avg2; //but we also want to set values to NO_READ_DIST if they were all NO_READ_DIST, and skip NO_READ_DIST values if some aren't
+
+void recordSensorHistory(struct lidar& data, struct sonar& data2){
+  history1[historyIndex] = data;
+  history2[historyIndex++] = data2;
+  if(historyIndex==SENSOR_HISTORY) historyIndex = 0;
+
+  max1 = {0, 0, 0, 0};
+  max2 = {0, 0};
+  min1 = {NO_READ_DIST, NO_READ_DIST, NO_READ_DIST, NO_READ_DIST};
+  min2 = {NO_READ_DIST, NO_READ_DIST};
+  avg1 = max1;
+  avg2 = max2;
+  bool front1=true;
+  bool back1=true;
+  bool left1=true;
+  bool right1=true;
+  bool left2=true;
+  bool right2=true;
+  for(int i=0; i<SENSOR_HISTORY; i++){
+    if(history1[i].front<NO_READ_DIST){
+      max1.front = max(max1.front, history1[i].front);
+      min1.front = min(min1.front, history1[i].front);
+      avg1.front+=history1[i].front;
+      front1=false;
+    }
+
+    if(history1[i].back<NO_READ_DIST){
+      min1.back = min(min1.back, history1[i].back);
+      max1.back = max(max1.back, history1[i].back);
+      avg1.back+=history1[i].back;
+      back1=false;
+    }
+      
+    if(history1[i].left<NO_READ_DIST){
+      max1.left = max(max1.left, history1[i].left);
+      min1.left = min(min1.left, history1[i].left);
+      avg1.left+=history1[i].left;
+      left1=false;
+    }
+
+    if(history1[i].right<NO_READ_DIST){
+      min1.right = min(min1.right, history1[i].right);
+      max1.right = max(max1.right, history1[i].right);
+      avg1.right+=history1[i].right;
+      right1=false;
+    }
+
+    if(history2[i].left<NO_READ_DIST){
+      max2.left = max(max2.left, history2[i].left);
+      min2.left = min(min2.left, history2[i].left);
+      avg2.left+=history2[i].left;
+      left2=false;
+    }
+      
+    if(history2[i].right<NO_READ_DIST){
+      min2.right = min(min2.right, history2[i].right);
+      max2.right = max(max2.right, history2[i].right);
+      avg2.right+=history2[i].right;
+      right2=false;
+    }
+  }
+  avg1.front/=SENSOR_HISTORY;
+  avg1.back/=SENSOR_HISTORY;
+  avg1.left/=SENSOR_HISTORY;
+  avg1.right/=SENSOR_HISTORY;
+  avg2.left/=SENSOR_HISTORY;
+  avg2.right/=SENSOR_HISTORY;
+  if(front1) {
+    avg1.front = NO_READ_DIST;
+    max1.front = NO_READ_DIST;
+    // min is already NO_READ_DIST if there were no read values
+  }
+  if(back1) {
+    avg1.back = NO_READ_DIST;
+    max1.back = NO_READ_DIST;
+  }
+  if(left1) {
+    avg1.left = NO_READ_DIST;
+    max1.left = NO_READ_DIST;
+  }
+  if(right1) {
+    avg1.right = NO_READ_DIST;
+    max1.right = NO_READ_DIST;
+  }
+  if(left2) {
+    avg2.left = NO_READ_DIST;
+    max2.left = NO_READ_DIST;
+  }
+  if(right2) {
+    avg2.right = NO_READ_DIST;
+    max2.right = NO_READ_DIST;
+  }
+}
 
 float smoothRandomWanderLinVel = 0;
 float smoothRandomWanderAngVel = 0;
@@ -754,9 +874,31 @@ void smoothRandomWander(){
   } //end if
 }
 
+#define COLLIDE_ON_THRES 5 //distance that causes collide to stop movement
+#define COLLIDE_OFF_THRES 20 //distance that causes collide to resume movement
+bool collideSaysToStop = false;
 
-//// MAIN
-//set up M7 (main processor) client to request sensor data
+// if the sensors say something is close, sets collideSaysToStop to true
+// currently only using lidars because sonars don't work well for this (for some reason)
+void collide(struct lidar& data, struct sonar& data2){
+  // float m = min(data.front, min(data.back, min(data.left, min(data.right, min(data2.left, data2.right)))));
+  float m = min(data.front, min(data.back, min(data.left, data.right)));
+  if(collideSaysToStop){
+    collideSaysToStop=m<COLLIDE_OFF_THRES;
+  } else {
+    collideSaysToStop=m<COLLIDE_ON_THRES;
+  }
+}
+
+
+void printCollideInfo() {
+  Serial.print(collideSaysToStop?"   is":"isn't");
+  Serial.print(" colliding");
+  Serial.print("\t   |\t");
+}
+
+
+//M7 (main processor)
 void setupM7() {
   int baudrate = 9600; //serial monitor baud rate'
   init_stepper(); //set up stepper motor
@@ -772,14 +914,34 @@ void setupM7() {
   Serial.println("Robot starting...Put ON TEST STAND");
 }
 
+//M7 (main processor)
 void loopM7() {
 
-  printSensorData();
+  struct lidar data;
+  struct sonar data2;
+  readSensorData(data, data2);
+  recordSensorHistory(data, data2);
+  // printSensorData(data, data2);
+
+  // Serial.println("--");
+  printSensorData(avg1, avg2);
+  // printSensorData(min1, min2);
+  // printSensorData(max1, max2);
+
+  //  collide:
+  collide(avg1, avg2);
+  printCollideInfo();
+  if(collideSaysToStop) {
+    moveVelo(0, 0); //stop
+  } else {
+    moveVelo(100, 0); //move forward for collide demo
     
-  // for now, only random wander, resetting where it wants to go every so often
-  // roughRandomWander();
-  alwaysForwardRandomWander();
-  // smoothRandomWander();
+    //  random wanders:
+    // roughRandomWander();
+    // alwaysForwardRandomWander();
+    // smoothRandomWander();
+  }
+
   
 
   updateMotors();
