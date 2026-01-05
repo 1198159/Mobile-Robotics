@@ -123,14 +123,14 @@ int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since l
 #define numSonars 2
 int lidars[numLidars] = {frontLdr, backLdr, leftLdr, rightLdr};
 unsigned long lidarRisingTimes[numLidars] = {0, 0, 0, 0};
+#define lidarDisconnectTimeout 40000
 uint8_t lidarStates[numLidars] = {0, 0, 0, 0}; //either 0 (low) or 1 (high)
-
 
 
 int sonars[numSonars] = {leftSnr, rightSnr};
 unsigned long sonarTimes[numSonars] = {0, 0};
 
-#define sonarTriggerDelay 10 // example code had 10, 30 works better: for how long the trigger is
+#define sonarTriggerDelay 10 // example code had 10: for how long the trigger is
 #define sonarAfterReadDelay 2000 //higher number means less interference between the two sonars, lower number means more frequent sensor reads
 #define sonarStartTimeout 40000
 int sonarStates[numSonars] = {0, 0};//0: do trigger start, 1: waiting sonarTriggerDelay micros, 2: reading, 3: waiting sonarAfterReadDelay micros
@@ -166,6 +166,32 @@ struct sonar {
   MSGPACK_DEFINE_ARRAY(left, right);  //https://stackoverflow.com/questions/37322145/msgpack-to-pack-structures https://www.appsloveworld.com/cplus/100/391/msgpack-to-pack-structures
 } dist2;
 
+// how many times a sensor needs to not read in order to set the distance to far away
+#define TIMES_NO_READ_THRES 10
+
+// how far is far away when a sensor doesn't read
+#define NO_READ_DIST 1000
+
+// when a sensor sucessfully reads, the corresponding sensor gets set to 0, each time it doesn't read it increments by one
+struct timesNoReadStruct {
+  unsigned int lidar_front;
+  unsigned int lidar_back;
+  unsigned int lidar_left;
+  unsigned int lidar_right;
+  unsigned int sonar_left;
+  unsigned int sonar_right;
+
+  // doesn't need to be sent across processors
+  // MSGPACK_DEFINE_ARRAY(lidar_front, lidar_back, lidar_left, lidar_right, sonar_left, sonar_right);
+} timesNoRead;
+
+
+// for readLidar and readSonar
+float* dist1arr = &dist.front;
+float* dist2arr = &dist2.left;
+unsigned int* timesNoRead1arr = &timesNoRead.lidar_front;
+unsigned int* timesNoRead2arr = &timesNoRead.sonar_left;
+
 // read_lidars is the function used to get lidar data to the M7
 struct lidar read_lidars() {
   return dist;
@@ -200,24 +226,33 @@ void setupM4() {
   #endif
 
   accelgyro.initialize();
+
+  for(int i=0; i<numLidars+numSonars; i++)
+    timesNoRead1arr[i] = TIMES_NO_READ_THRES;
 }
 
-// for readLidar and readSonar
-float* dist1arr = &dist.front;
-float* dist2arr = &dist2.left;
 
 // lidar is easier
 void readLidar(int m4LidarIndex){
   int state = digitalRead(lidars[m4LidarIndex]);
     if(lidarStates[m4LidarIndex] ^ state){ //xor: not the same
       if(state) {
-        // rising edge
+        //now high: rising edge
         lidarRisingTimes[m4LidarIndex] = micros();
       } else {
         // falling edge
         dist1arr[m4LidarIndex] = lidarTimeToDist(micros()-lidarRisingTimes[m4LidarIndex]);
+        timesNoRead1arr[m4LidarIndex] = 0;
+      }
+    } else if(lidarRisingTimes[m4LidarIndex]+lidarDisconnectTimeout<=micros()){ //no change for too long
+      // get a strike, but don't change any pins to give up read, also not resetting the timer so this gets all strikes pretty quickly
+      if(timesNoRead1arr[m4LidarIndex] == TIMES_NO_READ_THRES) {
+        dist1arr[m4LidarIndex] = NO_READ_DIST;
+      } else {
+        timesNoRead1arr[m4LidarIndex]++;
       }
     }
+
     lidarStates[m4LidarIndex] = state;
 }
 
@@ -231,12 +266,13 @@ bool readSonar(int m4SonarIndex){
     // done waiting after read, able to start the trigger
     sonarStates[m4SonarIndex] = 0;
     // pinMode(sonars[m4SonarIndex], OUTPUT);
-    // digitalWrite(sonars[m4SonarIndex], LOW);
+    // digitalWrite(sonars[m4SonarIndex], LOW);    
   }
 
   if(sonarStates[m4SonarIndex]==3 && !read){
     // end of read
     dist2arr[m4SonarIndex] = sonarTimeToDist(micros()-sonarTimes[m4SonarIndex]);
+    timesNoRead2arr[m4SonarIndex] = 0;
     sonarStates[m4SonarIndex] = 4;
     sonarTimes[m4SonarIndex] = micros();
 
@@ -252,7 +288,12 @@ bool readSonar(int m4SonarIndex){
       // give up read
       sonarStates[m4SonarIndex] = 4;
       sonarTimes[m4SonarIndex] = micros();
-      // dist2arr[m4SonarIndex] = 1000;
+      if(timesNoRead2arr[m4SonarIndex] == TIMES_NO_READ_THRES) {
+        dist2arr[m4SonarIndex] = NO_READ_DIST;
+      } else {
+        timesNoRead2arr[m4SonarIndex]++;
+      }
+
       return true;
     }
   }
