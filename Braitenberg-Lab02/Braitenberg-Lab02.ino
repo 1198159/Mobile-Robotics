@@ -131,8 +131,8 @@ uint8_t lidarStates[numLidars] = {0, 0, 0, 0}; //either 0 (low) or 1 (high)
 int sonars[numSonars] = {leftSnr, rightSnr};
 unsigned long sonarTimes[numSonars] = {0, 0};
 
-#define sonarTriggerDelay 10 // example code had 10: for how long the trigger is
-#define sonarAfterReadDelay 40000 //higher number means less interference between the two sonars, lower number means more frequent sensor reads
+#define sonarTriggerDelay 100 // example code had 10: for how long the trigger (putting a bit of sound in the room to measure with) is
+#define sonarAfterReadDelay 400000 //higher number means less interference between the two sonars (and between two reads from the same sonar), lower number means more frequent sensor reads. Big enough number (400000) means the alternating sensor lights is visible.
 #define sonarStartTimeout 40000
 int sonarStates[numSonars] = {0, 0};//0: do trigger start, 1: waiting sonarTriggerDelay micros, 2: reading, 3: waiting sonarAfterReadDelay micros
 
@@ -276,8 +276,13 @@ bool readSonar(int m4SonarIndex){
   if(sonarStates[m4SonarIndex]==4 && (sonarTimes[m4SonarIndex]+sonarAfterReadDelay<=micros())){
     // done waiting after read, able to start the trigger
     sonarStates[m4SonarIndex] = 0;
-    // pinMode(sonars[m4SonarIndex], OUTPUT);
-    // digitalWrite(sonars[m4SonarIndex], LOW);    
+
+    // stop putting sound in the room (not entirely sure this is doing anything)
+    pinMode(sonars[m4SonarIndex], OUTPUT);
+    digitalWrite(sonars[m4SonarIndex], LOW);    
+
+    // actually alternate
+    return true;//stays 0 until next time
   }
 
   if(sonarStates[m4SonarIndex]==3 && !read){
@@ -287,7 +292,7 @@ bool readSonar(int m4SonarIndex){
     sonarStates[m4SonarIndex] = 4;
     sonarTimes[m4SonarIndex] = micros();
 
-    return true;
+    // return true;
   }
 
   if(sonarStates[m4SonarIndex]==2){
@@ -305,7 +310,7 @@ bool readSonar(int m4SonarIndex){
         timesNoRead2arr[m4SonarIndex]++;
       }
 
-      return true;
+      // return true;
     }
   }
 
@@ -326,9 +331,10 @@ bool readSonar(int m4SonarIndex){
     sonarTimes[m4SonarIndex] = micros();
   }
 
-  return sonarStates[m4SonarIndex]==4 || sonarStates[m4SonarIndex]==2; 
+  // return sonarStates[m4SonarIndex]==4 || sonarStates[m4SonarIndex]==2; 
 
   // also returns true at end of read or give up
+  return false;
 }
 
 //poll the M4 (coprocessor) to read the sensor data
@@ -743,9 +749,20 @@ void roughRandomWander() {
 
 
 void alwaysForwardRandomWander() {
+  static float linvel=0;
+  static float angvel=0;
+  alwaysForwardRandomWander(linvel, angvel);
+  moveVelo(linvel, angvel);
+}
+
+
+
+void alwaysForwardRandomWander(float& linvel, float& angvel) {
   setRandomWanderLeds();
   if((millis() - lastRandomWanderTime) >= 1000){
-    moveVelo(MOVE_VEL, randFloat(-ROT_VEL, ROT_VEL));
+    linvel = MOVE_VEL;
+    angvel = randFloat(-ROT_VEL, ROT_VEL);
+    
 
     lastRandomWanderTime = millis();
   } //end if
@@ -933,15 +950,15 @@ float getPointToObstacle(struct lidar& data, struct sonar& data2) {
   if(data2.right<RUNAWAY_SONAR_CUTOFF_DIST) angvel-=RUNAWAY_SONAR_IDEAL_DIST-data2.right;
 
   // then side lidars
-  if(angvel==0){
+  // if(angvel==0){
     if(data.left<RUNAWAY_LIDAR_CUTOFF_DIST) angvel+=RUNAWAY_LIDAR_IDEAL_DIST-data.left;
     if(data.right<RUNAWAY_LIDAR_CUTOFF_DIST) angvel-=RUNAWAY_LIDAR_IDEAL_DIST-data.right;
-  }
+  // }
 
   //then turn around if something is behind
-  if(angvel==0){
-    if(data.back<RUNAWAY_LIDAR_CUTOFF_DIST) angvel+=RUNAWAY_LIDAR_IDEAL_DIST-data.back;
-  }
+  // if(angvel==0){
+  //   if(data.back<RUNAWAY_LIDAR_CUTOFF_DIST) angvel+=RUNAWAY_LIDAR_IDEAL_DIST-data.back;
+  // }
 
   // moveVelo(0, angvel/10);
   return angvel/10;
@@ -949,10 +966,19 @@ float getPointToObstacle(struct lidar& data, struct sonar& data2) {
 
 void runaway(struct lidar& data, struct sonar& data2){
   float angvel = getPointToObstacle(data, data2);
-  float linvel = 0;
-  // float linvel = getRunawayForwardBackward(data);
+  // float linvel = 0;
+  float linvel = getRunawayForwardBackward(data);
   // if(abs(angvel)>0.01) linvel=0;
-  moveVelo(linvel, angvel);
+  moveVelo(linvel, -angvel);
+}
+
+
+void runawayAndRandomWander(struct lidar& data, struct sonar& data2){
+  static float linvel=0;
+  static float angvel=0;
+  alwaysForwardRandomWander(linvel, angvel);
+
+  moveVelo(linvel+getRunawayForwardBackward(data)*5, angvel-getPointToObstacle(data, data2)*5);
 }
 
 
@@ -988,23 +1014,27 @@ void loopM7() {
   // printSensorData(max1, max2);
 
 
-  // //  collide:
-  // collide(avg1); //only using lidars for collide for now
-  // printCollideInfo();
-  // if(collideSaysToStop) {
-  //   moveVelo(0, 0); //stop
-  // } else {
-  //   moveVelo(100, 0); //move forward for collide demo
+  //  collide:
+  collide(avg1); //only using lidars for collide for now
+  printCollideInfo();
+  if(collideSaysToStop) {
+    moveVelo(0, 0); //stop
+  } else {
+    // moveVelo(100, 0); //move forward for collide demo
     
-  //   //  random wanders:
-  //   // roughRandomWander();
-  //   // alwaysForwardRandomWander();
-  //   // smoothRandomWander();
-  // }
+    //  random wanders:
+    // roughRandomWander();
+    // alwaysForwardRandomWander();
+    // smoothRandomWander();
+
+    //  runaway
+    // runaway(avg1, avg2);
 
 
-  //  runaway
-  runaway(avg1, avg2);
+    runawayAndRandomWander(avg1, avg2);
+  }
+
+
   
 
   updateMotors();
