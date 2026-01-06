@@ -132,7 +132,7 @@ int sonars[numSonars] = {leftSnr, rightSnr};
 unsigned long sonarTimes[numSonars] = {0, 0};
 
 #define sonarTriggerDelay 10 // example code had 10: for how long the trigger is
-#define sonarAfterReadDelay 2000 //higher number means less interference between the two sonars, lower number means more frequent sensor reads
+#define sonarAfterReadDelay 40000 //higher number means less interference between the two sonars, lower number means more frequent sensor reads
 #define sonarStartTimeout 40000
 int sonarStates[numSonars] = {0, 0};//0: do trigger start, 1: waiting sonarTriggerDelay micros, 2: reading, 3: waiting sonarAfterReadDelay micros
 
@@ -548,7 +548,7 @@ void updateMotors() {
 // doesn't limit the speeds, so be careful of moving too fast
 void moveVelo(float linvel, float angvel){
 
-  digitalWrite(stepperEnable, linvel==0 && angvel==0);//turns off the stepper motor driver to stop the terrible whining noise when not trying to move
+  // digitalWrite(stepperEnable, linvel==0 && angvel==0);//turns off the stepper motor driver to stop the terrible whining noise when not trying to move
 
   //add linear and angular distances and convert to motor steps
   // float steps1 = distanceToSteps(lindist) - radiansToSteps(angdist);
@@ -880,9 +880,18 @@ bool collideSaysToStop = false;
 
 // if the sensors say something is close, sets collideSaysToStop to true
 // currently only using lidars because sonars don't work well for this (for some reason)
-void collide(struct lidar& data, struct sonar& data2){
-  // float m = min(data.front, min(data.back, min(data.left, min(data.right, min(data2.left, data2.right)))));
+void collide(struct lidar& data){
   float m = min(data.front, min(data.back, min(data.left, data.right)));
+  if(collideSaysToStop){
+    collideSaysToStop=m<COLLIDE_OFF_THRES;
+  } else {
+    collideSaysToStop=m<COLLIDE_ON_THRES;
+  }
+}
+
+// collide with all sensors
+void collide(struct lidar& data, struct sonar& data2){
+  float m = min(data.front, min(data.back, min(data.left, min(data.right, min(data2.left, data2.right)))));
   if(collideSaysToStop){
     collideSaysToStop=m<COLLIDE_OFF_THRES;
   } else {
@@ -896,6 +905,56 @@ void printCollideInfo() {
   Serial.print(" colliding");
   Serial.print("\t   |\t");
 }
+
+#define RUNAWAY_LIDAR_IDEAL_DIST 80 //distance measured is subtracted from this to get force, makes small distances move the robot faster
+#define RUNAWAY_LIDAR_CUTOFF_DIST 40 //further than this is ignored
+#define RUNAWAY_SONAR_IDEAL_DIST 40 //distance measured is subtracted from this to get force, makes small distances move the robot faster
+#define RUNAWAY_SONAR_CUTOFF_DIST 20 //further than this is ignored
+
+// only go forward or backward away from an obstacle. Returns linvel.
+float getRunawayForwardBackward(struct lidar& data){
+  float linvel = 0;
+
+  if(data.front<RUNAWAY_LIDAR_CUTOFF_DIST) linvel-=RUNAWAY_LIDAR_IDEAL_DIST-data.front;
+  if(data.back<RUNAWAY_LIDAR_CUTOFF_DIST) linvel+=RUNAWAY_LIDAR_IDEAL_DIST-data.back;
+
+  // if(abs(linvel)<0.2) linvel=0; //don't squiggle in place
+  
+  // moveVelo(linvel*3, 0);
+  return linvel*3;
+}
+
+// related to runaway. turns to face an obstacle. Returns angvel.
+float getPointToObstacle(struct lidar& data, struct sonar& data2) {
+  float angvel = 0;
+
+  // sonars have highest priority
+  if(data2.left<RUNAWAY_SONAR_CUTOFF_DIST) angvel+=RUNAWAY_SONAR_IDEAL_DIST-data2.left;
+  if(data2.right<RUNAWAY_SONAR_CUTOFF_DIST) angvel-=RUNAWAY_SONAR_IDEAL_DIST-data2.right;
+
+  // then side lidars
+  if(angvel==0){
+    if(data.left<RUNAWAY_LIDAR_CUTOFF_DIST) angvel+=RUNAWAY_LIDAR_IDEAL_DIST-data.left;
+    if(data.right<RUNAWAY_LIDAR_CUTOFF_DIST) angvel-=RUNAWAY_LIDAR_IDEAL_DIST-data.right;
+  }
+
+  //then turn around if something is behind
+  if(angvel==0){
+    if(data.back<RUNAWAY_LIDAR_CUTOFF_DIST) angvel+=RUNAWAY_LIDAR_IDEAL_DIST-data.back;
+  }
+
+  // moveVelo(0, angvel/10);
+  return angvel/10;
+}
+
+void runaway(struct lidar& data, struct sonar& data2){
+  float angvel = getPointToObstacle(data, data2);
+  float linvel = 0;
+  // float linvel = getRunawayForwardBackward(data);
+  // if(abs(angvel)>0.01) linvel=0;
+  moveVelo(linvel, angvel);
+}
+
 
 
 //M7 (main processor)
@@ -928,20 +987,24 @@ void loopM7() {
   // printSensorData(min1, min2);
   // printSensorData(max1, max2);
 
-  //  collide:
-  collide(avg1, avg2);
-  printCollideInfo();
-  if(collideSaysToStop) {
-    moveVelo(0, 0); //stop
-  } else {
-    moveVelo(100, 0); //move forward for collide demo
-    
-    //  random wanders:
-    // roughRandomWander();
-    // alwaysForwardRandomWander();
-    // smoothRandomWander();
-  }
 
+  // //  collide:
+  // collide(avg1); //only using lidars for collide for now
+  // printCollideInfo();
+  // if(collideSaysToStop) {
+  //   moveVelo(0, 0); //stop
+  // } else {
+  //   moveVelo(100, 0); //move forward for collide demo
+    
+  //   //  random wanders:
+  //   // roughRandomWander();
+  //   // alwaysForwardRandomWander();
+  //   // smoothRandomWander();
+  // }
+
+
+  //  runaway
+  runaway(avg1, avg2);
   
 
   updateMotors();
