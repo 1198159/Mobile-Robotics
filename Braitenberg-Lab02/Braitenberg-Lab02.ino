@@ -291,8 +291,6 @@ bool readSonar(int m4SonarIndex){
     timesNoRead2arr[m4SonarIndex] = 0;
     sonarStates[m4SonarIndex] = 4;
     sonarTimes[m4SonarIndex] = micros();
-
-    // return true;
   }
 
   if(sonarStates[m4SonarIndex]==2){
@@ -309,8 +307,6 @@ bool readSonar(int m4SonarIndex){
       } else {
         timesNoRead2arr[m4SonarIndex]++;
       }
-
-      // return true;
     }
   }
 
@@ -331,9 +327,6 @@ bool readSonar(int m4SonarIndex){
     sonarTimes[m4SonarIndex] = micros();
   }
 
-  // return sonarStates[m4SonarIndex]==4 || sonarStates[m4SonarIndex]==2; 
-
-  // also returns true at end of read or give up
   return false;
 }
 
@@ -731,15 +724,37 @@ float randFloat(float low, float high){
 #define SMOOTH_RANDOM_WANDER_FORWARD_BIAS 2            //prefer going forwards this many times as much as going backwards
 
 
-void setRandomWanderLeds() {
-  digitalWrite(redLED, LOW);
-  digitalWrite(ylwLED, LOW);
+void setRandomWanderLedsOn() {
+  // digitalWrite(redLED, LOW);
+  // digitalWrite(ylwLED, LOW);
   digitalWrite(grnLED, HIGH);
-  digitalWrite(bluLED, LOW);
 }
 
+
+void setCollideLedsOn() {
+  digitalWrite(redLED, HIGH);
+  digitalWrite(ylwLED, LOW);
+  digitalWrite(grnLED, LOW);
+}
+void setCollideLedsOff() {
+  digitalWrite(redLED, LOW);
+}
+
+
+void setAvoidLedsOn() {
+  // digitalWrite(redLED, LOW);
+  digitalWrite(ylwLED, HIGH);
+  // digitalWrite(grnLED, LOW);
+}
+void setAvoidLedsOff() {
+  // digitalWrite(redLED, LOW);
+  digitalWrite(ylwLED, LOW);
+  // digitalWrite(grnLED, LOW);
+}
+
+
 void roughRandomWander() {
-  setRandomWanderLeds();
+  setRandomWanderLedsOn();
   if((millis() - lastRandomWanderTime) >= 2000){
     moveVelo(randFloat(-50, ROUGH_RANDOM_WANDER_FORWARD_BIAS*50), randFloat(-ROT_VEL, ROT_VEL));
 
@@ -748,24 +763,22 @@ void roughRandomWander() {
 }
 
 
-void alwaysForwardRandomWander() {
-  static float linvel=0;
-  static float angvel=0;
-  alwaysForwardRandomWander(linvel, angvel);
-  moveVelo(linvel, angvel);
-}
 
 
-
-void alwaysForwardRandomWander(float& linvel, float& angvel) {
-  setRandomWanderLeds();
+float alwaysForwardRandomWanderY() {
+  setRandomWanderLedsOn();
+  static float y = 0;
   if((millis() - lastRandomWanderTime) >= 1000){
-    linvel = MOVE_VEL;
-    angvel = randFloat(-ROT_VEL, ROT_VEL);
-    
+    y = randFloat(-MOVE_VEL, MOVE_VEL);
 
     lastRandomWanderTime = millis();
-  } //end if
+  }
+  return y/5;
+}
+
+float alwaysForwardRandomWanderX() {
+  setRandomWanderLedsOn();
+  return MOVE_VEL/5; //always forward
 }
 
 #define SENSOR_HISTORY 150
@@ -875,7 +888,7 @@ void recordSensorHistory(struct lidar& data, struct sonar& data2){
 float smoothRandomWanderLinVel = 0;
 float smoothRandomWanderAngVel = 0;
 void smoothRandomWander(){
-  setRandomWanderLeds();
+  setRandomWanderLedsOn();
   if((millis() - lastRandomWanderTime) >= 10){
     smoothRandomWanderLinVel+=randFloat(-20, SMOOTH_RANDOM_WANDER_FORWARD_BIAS*20);
     smoothRandomWanderAngVel+=randFloat(-0.2, 0.2);
@@ -892,17 +905,42 @@ void smoothRandomWander(){
 }
 
 #define COLLIDE_ON_THRES 5 //distance that causes collide to stop movement
-#define COLLIDE_OFF_THRES 20 //distance that causes collide to resume movement
+#define COLLIDE_OFF_THRES 10 //distance that causes collide to resume movement
+#define COLLIDE_AUTO_OFF_TIME 1000 //after a certain amount of time, turn off collide (for page 8 of the lab2pdf)
+#define COLLIDE_AUTO_OUT_TIME 5000 // stay out of collide
+unsigned long collideTime = 0;
 bool collideSaysToStop = false;
+bool collideWantsToStop = false;
 
 // if the sensors say something is close, sets collideSaysToStop to true
 // currently only using lidars because sonars don't work well for this (for some reason)
 void collide(struct lidar& data){
   float m = min(data.front, min(data.back, min(data.left, data.right)));
-  if(collideSaysToStop){
-    collideSaysToStop=m<COLLIDE_OFF_THRES;
+  if(collideWantsToStop){
+    collideWantsToStop=m<COLLIDE_OFF_THRES;
+    if(millis()-collideTime<COLLIDE_AUTO_OFF_TIME){
+      // on for an amount of time
+      collideSaysToStop = true;
+    } else if(millis()-collideTime<COLLIDE_AUTO_OUT_TIME) {
+      // off for an amount of time
+      collideSaysToStop = false;
+    } else {
+      // back on again? not sure what should happen if we think we are colliding the entire time
+      collideSaysToStop = true;
+      digitalWrite(bluLED, HIGH);
+    }
   } else {
-    collideSaysToStop=m<COLLIDE_ON_THRES;
+    collideWantsToStop=m<COLLIDE_ON_THRES;
+    collideTime=millis();
+    collideSaysToStop = false;
+    digitalWrite(bluLED, LOW);
+  }
+
+
+  if(collideSaysToStop){
+    setCollideLedsOn();
+  } else {
+    setCollideLedsOff();
   }
 }
 
@@ -923,17 +961,16 @@ void printCollideInfo() {
   Serial.print("\t   |\t");
 }
 
-#define RUNAWAY_LIDAR_IDEAL_DIST 80 //distance measured is subtracted from this to get force, makes small distances move the robot faster
+#define RUNAWAY_LIDAR_IDEAL_DIST 40 //distance measured is subtracted from this to get force, makes small distances move the robot faster
 #define RUNAWAY_LIDAR_CUTOFF_DIST 40 //further than this is ignored
-#define RUNAWAY_SONAR_IDEAL_DIST 40 //distance measured is subtracted from this to get force, makes small distances move the robot faster
+#define RUNAWAY_SONAR_IDEAL_DIST 20 //distance measured is subtracted from this to get force, makes small distances move the robot faster
 #define RUNAWAY_SONAR_CUTOFF_DIST 20 //further than this is ignored
 
 // only go forward or backward away from an obstacle. Returns linvel.
 float getRunawayForwardBackward(struct lidar& data){
   float linvel = 0;
 
-  if(data.front<RUNAWAY_LIDAR_CUTOFF_DIST) linvel-=RUNAWAY_LIDAR_IDEAL_DIST-data.front;
-  if(data.back<RUNAWAY_LIDAR_CUTOFF_DIST) linvel+=RUNAWAY_LIDAR_IDEAL_DIST-data.back;
+  
 
   // if(abs(linvel)<0.2) linvel=0; //don't squiggle in place
   
@@ -964,6 +1001,31 @@ float getPointToObstacle(struct lidar& data, struct sonar& data2) {
   return angvel/10;
 }
 
+// x is forward and backward
+float getSensorPushX(struct lidar& data, struct sonar& data2){
+  float x = 0;
+  if(data.front<RUNAWAY_LIDAR_CUTOFF_DIST) x-=RUNAWAY_LIDAR_IDEAL_DIST-data.front;
+  if(data.back<RUNAWAY_LIDAR_CUTOFF_DIST) x+=RUNAWAY_LIDAR_IDEAL_DIST-data.back;
+  
+  // if(data2.left<RUNAWAY_SONAR_CUTOFF_DIST) x-=RUNAWAY_SONAR_IDEAL_DIST-data2.left;
+  // if(data2.right<RUNAWAY_SONAR_CUTOFF_DIST) x-=RUNAWAY_SONAR_IDEAL_DIST-data2.right;
+
+  return x;
+}
+
+
+// y is left and right
+float getSensorPushY(struct lidar& data, struct sonar& data2){
+  float y = 0;
+  if(data.left<RUNAWAY_LIDAR_CUTOFF_DIST) y+=RUNAWAY_LIDAR_IDEAL_DIST-data.left;
+  if(data.right<RUNAWAY_LIDAR_CUTOFF_DIST) y-=RUNAWAY_LIDAR_IDEAL_DIST-data.right;
+  
+  // if(data2.left<RUNAWAY_SONAR_CUTOFF_DIST) y+=RUNAWAY_SONAR_IDEAL_DIST-data2.left;
+  // if(data2.right<RUNAWAY_SONAR_CUTOFF_DIST) y-=RUNAWAY_SONAR_IDEAL_DIST-data2.right;
+
+  return y;
+}
+
 void runaway(struct lidar& data, struct sonar& data2){
   float angvel = getPointToObstacle(data, data2);
   // float linvel = 0;
@@ -973,13 +1035,13 @@ void runaway(struct lidar& data, struct sonar& data2){
 }
 
 
-void runawayAndRandomWander(struct lidar& data, struct sonar& data2){
-  static float linvel=0;
-  static float angvel=0;
-  alwaysForwardRandomWander(linvel, angvel);
+// void runawayAndRandomWander(struct lidar& data, struct sonar& data2){
+//   static float linvel=0;
+//   static float angvel=0;
+//   alwaysForwardRandomWander(linvel, angvel);
 
-  moveVelo(linvel+getRunawayForwardBackward(data)*5, angvel-getPointToObstacle(data, data2)*5);
-}
+//   moveVelo(linvel+getRunawayForwardBackward(data)*5, angvel-getPointToObstacle(data, data2)*5);
+// }
 
 
 
@@ -1020,18 +1082,30 @@ void loopM7() {
   if(collideSaysToStop) {
     moveVelo(0, 0); //stop
   } else {
-    // moveVelo(100, 0); //move forward for collide demo
+
+    float x = 0;
+    float y = 0;
+
+    // x+=alwaysForwardRandomWanderX();
+    // y+=alwaysForwardRandomWanderY();
+
+    float sensorX = getSensorPushX(avg1, avg2)*2;
+    float sensorY = getSensorPushY(avg1, avg2)*2;
+    x+=sensorX;
+    y+=sensorY;
+    if(sensorX!=0 || sensorY!=0) setAvoidLedsOn();
+    else setAvoidLedsOff();
+
+    // float angvel = x>0? -y : y;
+    float angvel = -atan2(y, x);
+
+    float ninety = PI/2;
+    float ang = 4*angvel/5;
+    ang = ang>ninety ? ninety : (ang<-ninety ? -ninety : ang); //clamp
+
+
+    moveVelo(x*5*cos(ang), angvel);
     
-    //  random wanders:
-    // roughRandomWander();
-    // alwaysForwardRandomWander();
-    // smoothRandomWander();
-
-    //  runaway
-    // runaway(avg1, avg2);
-
-
-    runawayAndRandomWander(avg1, avg2);
   }
 
 
