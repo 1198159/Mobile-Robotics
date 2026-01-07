@@ -116,25 +116,39 @@ int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since l
 #define leftLdr 10
 #define rightLdr 11
 
+// old sonars
 #define leftSnr 2
 #define rightSnr 3
 
+// new sonars
+#define purpleSnrTrig 31 //digital
+#define purpleSnrEcho 33 //digital
+#define orangeSnrTrig 30 //digital
+#define orangeSnrEcho 32 //digital
+
 #define numLidars 4
-#define numSonars 2
 int lidars[numLidars] = {frontLdr, backLdr, leftLdr, rightLdr};
 unsigned long lidarRisingTimes[numLidars] = {0, 0, 0, 0};
 #define lidarDisconnectTimeout 40000
 uint8_t lidarStates[numLidars] = {0, 0, 0, 0}; //either 0 (low) or 1 (high)
 #define LIDAR_FAR_THRESH 60
 
-
+#define numSonars 2
 int sonars[numSonars] = {leftSnr, rightSnr};
 unsigned long sonarTimes[numSonars] = {0, 0};
-
 #define sonarTriggerDelay 100 // example code had 10: for how long the trigger (putting a bit of sound in the room to measure with) is
-#define sonarAfterReadDelay 400000 //higher number means less interference between the two sonars (and between two reads from the same sonar), lower number means more frequent sensor reads. Big enough number (400000) means the alternating sensor lights is visible.
+#define sonarAfterReadDelay 40000 //higher number means less interference between the two sonars (and between two reads from the same sonar), lower number means more frequent sensor reads. Big enough number (400000) means the alternating sensor lights is visible.
 #define sonarStartTimeout 40000
 int sonarStates[numSonars] = {0, 0};//0: do trigger start, 1: waiting sonarTriggerDelay micros, 2: reading, 3: waiting sonarAfterReadDelay micros
+
+#define numNewSonars 2
+int newSonarTriggers[numNewSonars] = {purpleSnrTrig, orangeSnrTrig};//digital
+int newSonarEchos[numNewSonars] = {purpleSnrEcho, orangeSnrEcho};//digital
+unsigned long newSonarTimes[numNewSonars] = {0, 0};
+#define newSonarTriggerDelay 10 // data sheet says 10: for how long the trigger (putting a bit of sound in the room to measure with) is
+#define newSonarAfterReadDelay sonarAfterReadDelay //reusing the same constant
+#define newSonarStartTimeout sonarStartTimeout
+int newSonarStates[numNewSonars] = {0, 0};//0: do trigger start, 1: waiting sonarTriggerDelay micros, 2: reading, 3: waiting sonarAfterReadDelay micros
 
 
 // imu
@@ -146,26 +160,15 @@ int16_t gx, gy, gz;
 
 
 
-// a struct to hold lidar data
-struct lidar {
-  // this can easily be extended to contain sonar data as well
-  float front;
-  float back;
-  float left;
-  float right;
-  // this defines some helper functions that allow RPC to send our struct (I found this on a random forum)
-  MSGPACK_DEFINE_ARRAY(front, back, left, right);  //https://stackoverflow.com/questions/37322145/msgpack-to-pack-structures https://www.appsloveworld.com/cplus/100/391/msgpack-to-pack-structures
-} dist;
+struct sensors {
+  float lidars[numLidars];
+  float sonars[numSonars];
+  float newSonars[numNewSonars];
+  // this defines some helper functions that allow RPC to send our struct (I [Berry] found this on a random forum)
+  MSGPACK_DEFINE_ARRAY(lidars, sonars, newSonars);  //https://stackoverflow.com/questions/37322145/msgpack-to-pack-structures https://www.appsloveworld.com/cplus/100/391/msgpack-to-pack-structures
+} sense;
 
 
-// a struct to hold lidar data
-struct sonar {
-  // this can easily be extended to contain sonar data as well
-  float left;
-  float right;
-  // this defines some helper functions that allow RPC to send our struct (I found this on a random forum)
-  MSGPACK_DEFINE_ARRAY(left, right);  //https://stackoverflow.com/questions/37322145/msgpack-to-pack-structures https://www.appsloveworld.com/cplus/100/391/msgpack-to-pack-structures
-} dist2;
 
 // how many times a sensor needs to not read in order to set the distance to far away
 #define TIMES_NO_READ_THRES 10
@@ -175,49 +178,56 @@ struct sonar {
 
 // when a sensor sucessfully reads, the corresponding sensor gets set to 0, each time it doesn't read it increments by one
 struct timesNoReadStruct {
-  unsigned int lidar_front;
-  unsigned int lidar_back;
-  unsigned int lidar_left;
-  unsigned int lidar_right;
-  unsigned int sonar_left;
-  unsigned int sonar_right;
+  unsigned int lidars[numLidars];
+  unsigned int sonars[numSonars];
+  unsigned int newSonars[numNewSonars];
 
   // doesn't need to be sent across processors
   // MSGPACK_DEFINE_ARRAY(lidar_front, lidar_back, lidar_left, lidar_right, sonar_left, sonar_right);
 } timesNoRead;
 
 
-// for readLidar and readSonar
-float* dist1arr = &dist.front;
-float* dist2arr = &dist2.left;
-unsigned int* timesNoRead1arr = &timesNoRead.lidar_front;
-unsigned int* timesNoRead2arr = &timesNoRead.sonar_left;
-
 // read_lidars is the function used to get lidar data to the M7
-struct lidar read_lidars() {
-  return dist;
+struct sensors read_sensors() {
+  return sense;
 }
 
-// read_lidars is the function used to get lidar data to the M7
-struct sonar read_sonars() {
-  return dist2;
-}
-
-// micros to some unit (probably inches)
+// micros to some unit (maybe cm)
 float lidarTimeToDist(float t) {
   return (t - 1000.0f) * 3.0f / 40.0f;
 }
 
-// micros to some unit (probably inches)
+// micros to some unit (maybe cm)
 float sonarTimeToDist(float t){
   return t * ((331.5f + 0.6f * 20) * 100 / 1000000.0) / 2;
 }
 
+// micros to cm, from datasheet https://cdn.sparkfun.com/datasheets/Sensors/Proximity/HCSR04.pdf
+float newSonarTimeToDist(float t){
+  return t/58;
+}
+
+
+void initLidar(int lidarIndex) {
+  timesNoRead.lidars[lidarIndex] = TIMES_NO_READ_THRES;
+}
+
+void initSonar(int sonarIndex) {
+  timesNoRead.sonars[sonarIndex] = TIMES_NO_READ_THRES;
+}
+
+void initNewSonar(int sonarIndex) {
+  timesNoRead.newSonars[sonarIndex] = TIMES_NO_READ_THRES;
+
+  pinMode(newSonarTriggers[sonarIndex], OUTPUT);
+  digitalWrite(newSonarTriggers[sonarIndex], LOW);  
+
+  pinMode(newSonarEchos[sonarIndex], INPUT);
+}
 
 //set up the M4 (coprocessor) to be sensor server
 void setupM4() {
-  RPC.bind("read_lidars", read_lidars);  // bind a method to return the lidar data all at once
-  RPC.bind("read_sonars", read_sonars);  // bind a method to return the sonar data all at once
+  RPC.bind("read_sensors", read_sensors);  // bind a method to return the sensor data all at once
 
   // imu
   #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
@@ -228,103 +238,162 @@ void setupM4() {
 
   accelgyro.initialize();
 
-  for(int i=0; i<numLidars+numSonars; i++)
-    timesNoRead1arr[i] = TIMES_NO_READ_THRES;
+  for(int i=0; i<numLidars; i++)
+    initLidar(i);
+  for(int i=0; i<numSonars; i++)
+    initSonar(i);
+  for(int i=0; i<numNewSonars; i++)
+    initNewSonar(i);
 }
 
 
 // lidar is easier
-void readLidar(int m4LidarIndex){
-  int state = digitalRead(lidars[m4LidarIndex]);
+void readLidar(int lidarIndex){
+  int state = digitalRead(lidars[lidarIndex]);
   bool noRead = false;
-  if(lidarStates[m4LidarIndex] ^ state){ //xor: not the same
+  if(lidarStates[lidarIndex] ^ state){ //xor: not the same
     if(state) {
       //now high: rising edge
-      lidarRisingTimes[m4LidarIndex] = micros();
+      lidarRisingTimes[lidarIndex] = micros();
     } else {
       // falling edge
-      float dist = lidarTimeToDist(micros()-lidarRisingTimes[m4LidarIndex]);
+      float dist = lidarTimeToDist(micros()-lidarRisingTimes[lidarIndex]);
       if(dist<LIDAR_FAR_THRESH) {
-        dist1arr[m4LidarIndex] = dist;
-        timesNoRead1arr[m4LidarIndex] = 0;
+        sense.lidars[lidarIndex] = dist;
+        timesNoRead.lidars[lidarIndex] = 0;
       } else {
         noRead = true;
       }
     }
-  } else if(lidarRisingTimes[m4LidarIndex]+lidarDisconnectTimeout<=micros()){ //no change for too long
+  } else if(lidarRisingTimes[lidarIndex]+lidarDisconnectTimeout<=micros()){ //no change for too long
     // get a strike, but don't change any pins to give up read, also not resetting the timer so this gets all strikes pretty quickly
     noRead = true;
   }
 
   if(noRead) {
-    if(timesNoRead1arr[m4LidarIndex] == TIMES_NO_READ_THRES) {
-      dist1arr[m4LidarIndex] = NO_READ_DIST;
+    if(timesNoRead.lidars[lidarIndex] == TIMES_NO_READ_THRES) {
+      sense.lidars[lidarIndex] = NO_READ_DIST;
     } else {
-      timesNoRead1arr[m4LidarIndex]++;
+      timesNoRead.lidars[lidarIndex]++;
     }
   }
 
-  lidarStates[m4LidarIndex] = state;
+  lidarStates[lidarIndex] = state;
 }
 
 // sonar is harder because the pin is used for triggering and reading
 // sonarStates:  0: do trigger start, 1: waiting sonarTriggerDelay micros, 2: waiting for read to start, 3: reading, 4: waiting sonarAfterReadDelay micros
 // returns true if the next (the other because there is only 2) sonar should be read
-bool readSonar(int m4SonarIndex){
-  int read = digitalRead(sonars[m4SonarIndex]);
+bool readSonar(int sonarIndex){
+  int read = digitalRead(sonars[sonarIndex]);
 
-  if(sonarStates[m4SonarIndex]==4 && (sonarTimes[m4SonarIndex]+sonarAfterReadDelay<=micros())){
+  if(sonarStates[sonarIndex]==4 && (sonarTimes[sonarIndex]+sonarAfterReadDelay<=micros())){
     // done waiting after read, able to start the trigger
-    sonarStates[m4SonarIndex] = 0;
+    sonarStates[sonarIndex] = 0;
 
     // stop putting sound in the room (not entirely sure this is doing anything)
-    pinMode(sonars[m4SonarIndex], OUTPUT);
-    digitalWrite(sonars[m4SonarIndex], LOW);    
+    pinMode(sonars[sonarIndex], OUTPUT);
+    digitalWrite(sonars[sonarIndex], LOW);    
 
     // actually alternate
     return true;//stays 0 until next time
   }
 
-  if(sonarStates[m4SonarIndex]==3 && !read){
+  if(sonarStates[sonarIndex]==3 && !read){
     // end of read
-    dist2arr[m4SonarIndex] = sonarTimeToDist(micros()-sonarTimes[m4SonarIndex]);
-    timesNoRead2arr[m4SonarIndex] = 0;
-    sonarStates[m4SonarIndex] = 4;
-    sonarTimes[m4SonarIndex] = micros();
+    sense.sonars[sonarIndex] = sonarTimeToDist(micros()-sonarTimes[sonarIndex]);
+    timesNoRead.sonars[sonarIndex] = 0;
+    sonarStates[sonarIndex] = 4;
+    sonarTimes[sonarIndex] = micros();
   }
 
-  if(sonarStates[m4SonarIndex]==2){
+  if(sonarStates[sonarIndex]==2){
     if(read){
       // start of read
-      sonarStates[m4SonarIndex] = 3;
-      sonarTimes[m4SonarIndex] = micros();
-    } else if(sonarTimes[m4SonarIndex]+sonarStartTimeout<=micros()) {
+      sonarStates[sonarIndex] = 3;
+      sonarTimes[sonarIndex] = micros();
+    } else if(sonarTimes[sonarIndex]+sonarStartTimeout<=micros()) {
       // give up read
-      sonarStates[m4SonarIndex] = 4;
-      sonarTimes[m4SonarIndex] = micros();
-      if(timesNoRead2arr[m4SonarIndex] == TIMES_NO_READ_THRES) {
-        dist2arr[m4SonarIndex] = NO_READ_DIST;
+      sonarStates[sonarIndex] = 4;
+      sonarTimes[sonarIndex] = micros();
+      if(timesNoRead.sonars[sonarIndex] == TIMES_NO_READ_THRES) {
+        sense.sonars[sonarIndex] = NO_READ_DIST;
       } else {
-        timesNoRead2arr[m4SonarIndex]++;
+        timesNoRead.sonars[sonarIndex]++;
       }
     }
   }
 
-  if(sonarStates[m4SonarIndex]==1 && (sonarTimes[m4SonarIndex]+sonarTriggerDelay<=micros())){
+  if(sonarStates[sonarIndex]==1 && (sonarTimes[sonarIndex]+sonarTriggerDelay<=micros())){
     // finish trigger, start read
-    digitalWrite(sonars[m4SonarIndex], LOW);
-    pinMode(sonars[m4SonarIndex], INPUT);
-    sonarStates[m4SonarIndex] = 2;
-    sonarTimes[m4SonarIndex] = micros();
+    digitalWrite(sonars[sonarIndex], LOW);
+    pinMode(sonars[sonarIndex], INPUT);
+    sonarStates[sonarIndex] = 2;
+    sonarTimes[sonarIndex] = micros();
   }
 
-  if(sonarStates[m4SonarIndex]==0){
+  if(sonarStates[sonarIndex]==0){
     // start trigger
-    pinMode(sonars[m4SonarIndex], OUTPUT);
-    digitalWrite(sonars[m4SonarIndex], LOW);
-    digitalWrite(sonars[m4SonarIndex], HIGH);
-    sonarStates[m4SonarIndex] = 1;
-    sonarTimes[m4SonarIndex] = micros();
+    pinMode(sonars[sonarIndex], OUTPUT);
+    digitalWrite(sonars[sonarIndex], LOW);
+    digitalWrite(sonars[sonarIndex], HIGH);
+    sonarStates[sonarIndex] = 1;
+    sonarTimes[sonarIndex] = micros();
+  }
+
+  return false;
+}
+
+
+bool readNewSonar(int sonarIndex){
+  int read = digitalRead(newSonarEchos[sonarIndex]);
+
+  if(newSonarStates[sonarIndex]==4 && (newSonarTimes[sonarIndex]+newSonarAfterReadDelay<=micros())){
+    // done waiting after read, able to start the trigger
+    newSonarStates[sonarIndex] = 0;
+
+    // actually alternate
+    return true;//stays in state 0 until next time
+  }
+
+  if(newSonarStates[sonarIndex]==3 && !read){
+    // end of read
+    sense.newSonars[sonarIndex] = newSonarTimeToDist(micros()-newSonarTimes[sonarIndex]);
+    timesNoRead.newSonars[sonarIndex] = 0;
+    newSonarStates[sonarIndex] = 4;
+    newSonarTimes[sonarIndex] = micros();
+  }
+
+  if(newSonarStates[sonarIndex]==2){
+    if(read){
+      // start of read
+      newSonarStates[sonarIndex] = 3;
+      newSonarTimes[sonarIndex] = micros();
+    } else if(newSonarTimes[sonarIndex]+newSonarStartTimeout<=micros()) {
+      // give up read
+      newSonarStates[sonarIndex] = 4;
+      newSonarTimes[sonarIndex] = micros();
+      if(timesNoRead.newSonars[sonarIndex] == TIMES_NO_READ_THRES) {
+        sense.newSonars[sonarIndex] = NO_READ_DIST;
+      } else {
+        timesNoRead.newSonars[sonarIndex]++;
+      }
+    }
+  }
+
+  if(newSonarStates[sonarIndex]==1 && (newSonarTimes[sonarIndex]+newSonarTriggerDelay<=micros())){
+    // finish trigger, start read
+    digitalWrite(newSonarTriggers[sonarIndex], LOW);
+    newSonarStates[sonarIndex] = 2;
+    newSonarTimes[sonarIndex] = micros();
+  }
+
+  if(newSonarStates[sonarIndex]==0){
+    // start trigger
+    pinMode(newSonarTriggers[sonarIndex], OUTPUT);
+    digitalWrite(newSonarTriggers[sonarIndex], HIGH);
+    newSonarStates[sonarIndex] = 1;
+    newSonarTimes[sonarIndex] = micros();
   }
 
   return false;
@@ -334,47 +403,65 @@ bool readSonar(int m4SonarIndex){
 void loopM4() {
 
   // the lidars don't interfere, they all can be read at the same time  
-  for(int m4LidarIndex=0; m4LidarIndex<numLidars; m4LidarIndex++){
-    readLidar(m4LidarIndex);
+  for(int lidarIndex=0; lidarIndex<numLidars; lidarIndex++){
+    readLidar(lidarIndex);
   }
 
   // imu
   // accelgyro.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
 
-  // dist1arr[0] = ax;
-  // dist1arr[1] = ay;
-  // dist1arr[2] = az;
-  // dist1arr[3] = gx;
-  // dist2arr[0] = gy;
-  // dist2arr[1] = gz;
+  // sense.lidars[0] = ax;
+  // sense.lidars[1] = ay;
+  // sense.lidars[2] = az;
+  // sense.lidars[3] = gx;
+  // sense.sonars[0] = gy;
+  // sense.sonars[1] = gz;
 
   // delay(100);
-  // the two sonars can interfere with eachother, so they can't be read at the same time
+
+
+  // the sonars can interfere with eachother, so they can't be read at the same time
+  static bool isOnNewSonar=true; //goes back and forth between old and new sonar
+
   static int m4SonarIndex=0;
-  if(readSonar(m4SonarIndex)) m4SonarIndex++;
-  if(m4SonarIndex==numSonars) m4SonarIndex=0;
+  if(isOnNewSonar){
+    if(readNewSonar(m4SonarIndex)) m4SonarIndex++;
+    if(m4SonarIndex==numNewSonars) {
+      m4SonarIndex=0;
+      isOnNewSonar=false;
+    }
+  } else {
+    if(readSonar(m4SonarIndex)) m4SonarIndex++;
+    if(m4SonarIndex==numSonars) {
+      m4SonarIndex=0;
+      isOnNewSonar=true;
+    }
+  }
 }
 
 
-void readSensorData(struct lidar& data, struct sonar& data2) {
-  data = RPC.call("read_lidars").as<struct lidar>();
-  data2 = RPC.call("read_sonars").as<struct sonar>();
+void readSensorData(struct sensors& data) {
+  data = RPC.call("read_sensors").as<struct sensors>();
 }
 
-void printSensorData(struct lidar& data, struct sonar& data2) {
+void printSensorData(struct sensors& data) {
   // print lidar data
-  Serial.print("lidar:   f ");
-  Serial.print(data.front);
+  Serial.print("lid:   f ");
+  Serial.print(data.lidars[0]);
   Serial.print(", \t  b ");
-  Serial.print(data.back);
+  Serial.print(data.lidars[1]);
   Serial.print(", \t  l ");
-  Serial.print(data.left);
+  Serial.print(data.lidars[2]);
   Serial.print(", \t  r ");
-  Serial.print(data.right);
-  Serial.print("\t |\tsonar:   l ");
-  Serial.print(data2.left);
+  Serial.print(data.lidars[3]);
+  Serial.print("\t |\tson:   l ");
+  Serial.print(data.sonars[0]);
   Serial.print(", \t  r ");
-  Serial.print(data2.right);
+  Serial.print(data.sonars[1]);
+  Serial.print("\t |\tnSon:   l ");
+  Serial.print(data.newSonars[0]);
+  Serial.print(", \t  r ");
+  Serial.print(data.newSonars[1]);
   Serial.println();
 }
 
@@ -783,105 +870,39 @@ float alwaysForwardRandomWanderX() {
 
 #define SENSOR_HISTORY 150
 int historyIndex = 0;
-struct lidar history1[SENSOR_HISTORY];
-struct sonar history2[SENSOR_HISTORY];
-struct lidar max1; //would min and max just be noise?
-struct sonar max2;
-struct lidar min1;
-struct sonar min2;
-struct lidar avg1; //if we were just doing avg, could do it more efficiently: change avg by (new value-old value)/history
-struct sonar avg2; //but we also want to set values to NO_READ_DIST if they were all NO_READ_DIST, and skip NO_READ_DIST values if some aren't
+struct sensors history[SENSOR_HISTORY];
+struct sensors maxData; //would min and max just be noise?
+struct sensors minData;
+//if we were just doing avg, could do it more efficiently: change avg by (new value-old value)/SENSOR_HISTORY
+//but we also want to set values to NO_READ_DIST if they were all NO_READ_DIST, and skip NO_READ_DIST values if some aren't
+struct sensors avgData; 
+#define numSensors numLidars+numSonars+numNewSonars
 
-void recordSensorHistory(struct lidar& data, struct sonar& data2){
-  history1[historyIndex] = data;
-  history2[historyIndex++] = data2;
+
+void recordSensorHistory(struct sensors& data){
+  history[historyIndex++] = data;
   if(historyIndex==SENSOR_HISTORY) historyIndex = 0;
 
-  max1 = {0, 0, 0, 0};
-  max2 = {0, 0};
-  min1 = {NO_READ_DIST, NO_READ_DIST, NO_READ_DIST, NO_READ_DIST};
-  min2 = {NO_READ_DIST, NO_READ_DIST};
-  avg1 = max1;
-  avg2 = max2;
-  bool front1=true;
-  bool back1=true;
-  bool left1=true;
-  bool right1=true;
-  bool left2=true;
-  bool right2=true;
-  for(int i=0; i<SENSOR_HISTORY; i++){
-    if(history1[i].front<NO_READ_DIST){
-      max1.front = max(max1.front, history1[i].front);
-      min1.front = min(min1.front, history1[i].front);
-      avg1.front+=history1[i].front;
-      front1=false;
+  bool isAllNoRead[numSensors];
+  for(int s=0; s<numSensors; s++){
+    maxData.lidars[s]=0;
+    minData.lidars[s]=NO_READ_DIST;
+    avgData.lidars[s]=0;
+    isAllNoRead[s]=true;
+    for(int i=0; i<SENSOR_HISTORY; i++){
+      if(history[i].lidars[s]<NO_READ_DIST){
+        maxData.lidars[s] = max(maxData.lidars[s], history[i].lidars[s]);
+        minData.lidars[s] = min(minData.lidars[s], history[i].lidars[s]);
+        avgData.lidars[s]+=history[i].lidars[s];
+        isAllNoRead[s]=false;
+      }
     }
-
-    if(history1[i].back<NO_READ_DIST){
-      min1.back = min(min1.back, history1[i].back);
-      max1.back = max(max1.back, history1[i].back);
-      avg1.back+=history1[i].back;
-      back1=false;
+    avgData.lidars[s]/=SENSOR_HISTORY;
+    if(isAllNoRead[s]){
+      maxData.lidars[s]=NO_READ_DIST;
+      avgData.lidars[s]=NO_READ_DIST;
+      // min is already NO_READ_DIST if there were no read values
     }
-      
-    if(history1[i].left<NO_READ_DIST){
-      max1.left = max(max1.left, history1[i].left);
-      min1.left = min(min1.left, history1[i].left);
-      avg1.left+=history1[i].left;
-      left1=false;
-    }
-
-    if(history1[i].right<NO_READ_DIST){
-      min1.right = min(min1.right, history1[i].right);
-      max1.right = max(max1.right, history1[i].right);
-      avg1.right+=history1[i].right;
-      right1=false;
-    }
-
-    if(history2[i].left<NO_READ_DIST){
-      max2.left = max(max2.left, history2[i].left);
-      min2.left = min(min2.left, history2[i].left);
-      avg2.left+=history2[i].left;
-      left2=false;
-    }
-      
-    if(history2[i].right<NO_READ_DIST){
-      min2.right = min(min2.right, history2[i].right);
-      max2.right = max(max2.right, history2[i].right);
-      avg2.right+=history2[i].right;
-      right2=false;
-    }
-  }
-  avg1.front/=SENSOR_HISTORY;
-  avg1.back/=SENSOR_HISTORY;
-  avg1.left/=SENSOR_HISTORY;
-  avg1.right/=SENSOR_HISTORY;
-  avg2.left/=SENSOR_HISTORY;
-  avg2.right/=SENSOR_HISTORY;
-  if(front1) {
-    avg1.front = NO_READ_DIST;
-    max1.front = NO_READ_DIST;
-    // min is already NO_READ_DIST if there were no read values
-  }
-  if(back1) {
-    avg1.back = NO_READ_DIST;
-    max1.back = NO_READ_DIST;
-  }
-  if(left1) {
-    avg1.left = NO_READ_DIST;
-    max1.left = NO_READ_DIST;
-  }
-  if(right1) {
-    avg1.right = NO_READ_DIST;
-    max1.right = NO_READ_DIST;
-  }
-  if(left2) {
-    avg2.left = NO_READ_DIST;
-    max2.left = NO_READ_DIST;
-  }
-  if(right2) {
-    avg2.right = NO_READ_DIST;
-    max2.right = NO_READ_DIST;
   }
 }
 
@@ -914,8 +935,8 @@ bool collideWantsToStop = false;
 
 // if the sensors say something is close, sets collideSaysToStop to true
 // currently only using lidars because sonars don't work well for this (for some reason)
-void collide(struct lidar& data){
-  float m = min(data.front, min(data.back, min(data.left, data.right)));
+void collide(struct sensors& data){
+  float m = min(data.lidars[0], min(data.lidars[1], min(data.lidars[2], data.lidars[3])));
   if(collideWantsToStop){
     collideWantsToStop=m<COLLIDE_OFF_THRES;
     if(millis()-collideTime<COLLIDE_AUTO_OFF_TIME){
@@ -944,16 +965,6 @@ void collide(struct lidar& data){
   }
 }
 
-// collide with all sensors
-void collide(struct lidar& data, struct sonar& data2){
-  float m = min(data.front, min(data.back, min(data.left, min(data.right, min(data2.left, data2.right)))));
-  if(collideSaysToStop){
-    collideSaysToStop=m<COLLIDE_OFF_THRES;
-  } else {
-    collideSaysToStop=m<COLLIDE_ON_THRES;
-  }
-}
-
 
 void printCollideInfo() {
   Serial.print(collideSaysToStop?"   is":"isn't");
@@ -966,82 +977,31 @@ void printCollideInfo() {
 #define RUNAWAY_SONAR_IDEAL_DIST 20 //distance measured is subtracted from this to get force, makes small distances move the robot faster
 #define RUNAWAY_SONAR_CUTOFF_DIST 20 //further than this is ignored
 
-// only go forward or backward away from an obstacle. Returns linvel.
-float getRunawayForwardBackward(struct lidar& data){
-  float linvel = 0;
-
-  
-
-  // if(abs(linvel)<0.2) linvel=0; //don't squiggle in place
-  
-  // moveVelo(linvel*3, 0);
-  return linvel*3;
-}
-
-// related to runaway. turns to face an obstacle. Returns angvel.
-float getPointToObstacle(struct lidar& data, struct sonar& data2) {
-  float angvel = 0;
-
-  // sonars have highest priority
-  if(data2.left<RUNAWAY_SONAR_CUTOFF_DIST) angvel+=RUNAWAY_SONAR_IDEAL_DIST-data2.left;
-  if(data2.right<RUNAWAY_SONAR_CUTOFF_DIST) angvel-=RUNAWAY_SONAR_IDEAL_DIST-data2.right;
-
-  // then side lidars
-  // if(angvel==0){
-    if(data.left<RUNAWAY_LIDAR_CUTOFF_DIST) angvel+=RUNAWAY_LIDAR_IDEAL_DIST-data.left;
-    if(data.right<RUNAWAY_LIDAR_CUTOFF_DIST) angvel-=RUNAWAY_LIDAR_IDEAL_DIST-data.right;
-  // }
-
-  //then turn around if something is behind
-  // if(angvel==0){
-  //   if(data.back<RUNAWAY_LIDAR_CUTOFF_DIST) angvel+=RUNAWAY_LIDAR_IDEAL_DIST-data.back;
-  // }
-
-  // moveVelo(0, angvel/10);
-  return angvel/10;
-}
 
 // x is forward and backward
-float getSensorPushX(struct lidar& data, struct sonar& data2){
+float getSensorPushX(struct sensors& data){
   float x = 0;
-  if(data.front<RUNAWAY_LIDAR_CUTOFF_DIST) x-=RUNAWAY_LIDAR_IDEAL_DIST-data.front;
-  if(data.back<RUNAWAY_LIDAR_CUTOFF_DIST) x+=RUNAWAY_LIDAR_IDEAL_DIST-data.back;
+  if(data.lidars[0]<RUNAWAY_LIDAR_CUTOFF_DIST) x-=RUNAWAY_LIDAR_IDEAL_DIST-data.lidars[0];
+  if(data.lidars[1]<RUNAWAY_LIDAR_CUTOFF_DIST) x+=RUNAWAY_LIDAR_IDEAL_DIST-data.lidars[1];
   
-  // if(data2.left<RUNAWAY_SONAR_CUTOFF_DIST) x-=RUNAWAY_SONAR_IDEAL_DIST-data2.left;
-  // if(data2.right<RUNAWAY_SONAR_CUTOFF_DIST) x-=RUNAWAY_SONAR_IDEAL_DIST-data2.right;
+  // if(data.sonars[0]<RUNAWAY_SONAR_CUTOFF_DIST) x-=RUNAWAY_SONAR_IDEAL_DIST-data.sonars[0];
+  // if(data.sonars[1]<RUNAWAY_SONAR_CUTOFF_DIST) x-=RUNAWAY_SONAR_IDEAL_DIST-data.sonars[1];
 
   return x;
 }
 
 
 // y is left and right
-float getSensorPushY(struct lidar& data, struct sonar& data2){
+float getSensorPushY(struct sensors& data){
   float y = 0;
-  if(data.left<RUNAWAY_LIDAR_CUTOFF_DIST) y+=RUNAWAY_LIDAR_IDEAL_DIST-data.left;
-  if(data.right<RUNAWAY_LIDAR_CUTOFF_DIST) y-=RUNAWAY_LIDAR_IDEAL_DIST-data.right;
+  if(data.lidars[2]<RUNAWAY_LIDAR_CUTOFF_DIST) y+=RUNAWAY_LIDAR_IDEAL_DIST-data.lidars[2];
+  if(data.lidars[3]<RUNAWAY_LIDAR_CUTOFF_DIST) y-=RUNAWAY_LIDAR_IDEAL_DIST-data.lidars[3];
   
-  // if(data2.left<RUNAWAY_SONAR_CUTOFF_DIST) y+=RUNAWAY_SONAR_IDEAL_DIST-data2.left;
-  // if(data2.right<RUNAWAY_SONAR_CUTOFF_DIST) y-=RUNAWAY_SONAR_IDEAL_DIST-data2.right;
+  // if(data.sonars[0]<RUNAWAY_SONAR_CUTOFF_DIST) y+=RUNAWAY_SONAR_IDEAL_DIST-data.sonars[0];
+  // if(data.sonars[1]<RUNAWAY_SONAR_CUTOFF_DIST) y-=RUNAWAY_SONAR_IDEAL_DIST-data.sonars[1];
 
   return y;
 }
-
-void runaway(struct lidar& data, struct sonar& data2){
-  float angvel = getPointToObstacle(data, data2);
-  // float linvel = 0;
-  float linvel = getRunawayForwardBackward(data);
-  // if(abs(angvel)>0.01) linvel=0;
-  moveVelo(linvel, -angvel);
-}
-
-
-// void runawayAndRandomWander(struct lidar& data, struct sonar& data2){
-//   static float linvel=0;
-//   static float angvel=0;
-//   alwaysForwardRandomWander(linvel, angvel);
-
-//   moveVelo(linvel+getRunawayForwardBackward(data)*5, angvel-getPointToObstacle(data, data2)*5);
-// }
 
 
 
@@ -1064,21 +1024,23 @@ void setupM7() {
 //M7 (main processor)
 void loopM7() {
 
-  struct lidar data;
-  struct sonar data2;
-  readSensorData(data, data2);
-  recordSensorHistory(data, data2);
-  // printSensorData(data, data2);
+  struct sensors data;
+  readSensorData(data); //can be problematic if the sensors struct changes. 
+  // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
+
+
+  recordSensorHistory(data);
+  // printSensorData(data);
 
   // Serial.println("--");
-  printSensorData(avg1, avg2);
-  // printSensorData(min1, min2);
-  // printSensorData(max1, max2);
+  printSensorData(avgData);
+  // printSensorData(minData);
+  // printSensorData(maxData);
 
 
   //  collide:
-  collide(avg1); //only using lidars for collide for now
-  printCollideInfo();
+  collide(avgData); //only using lidars for collide for now
+  // printCollideInfo();
   if(collideSaysToStop) {
     moveVelo(0, 0); //stop
   } else {
@@ -1089,8 +1051,8 @@ void loopM7() {
     // x+=alwaysForwardRandomWanderX();
     // y+=alwaysForwardRandomWanderY();
 
-    float sensorX = getSensorPushX(avg1, avg2)*2;
-    float sensorY = getSensorPushY(avg1, avg2)*2;
+    float sensorX = getSensorPushX(avgData)*2;
+    float sensorY = getSensorPushY(avgData)*2;
     x+=sensorX;
     y+=sensorY;
     if(sensorX!=0 || sensorY!=0) setAvoidLedsOn();
@@ -1115,7 +1077,7 @@ void loopM7() {
 } //end loop
 
 
-//setup function w/infinite loops to send/recv data
+//setup function for both processors
 void setup() {
   RPC.begin();
   if (HAL_GetCurrentCPUID() == CM7_CPUID) {
