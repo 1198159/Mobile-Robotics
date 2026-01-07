@@ -210,14 +210,17 @@ float newSonarTimeToDist(float t){
 
 void initLidar(int lidarIndex) {
   timesNoRead.lidars[lidarIndex] = TIMES_NO_READ_THRES;
+  sense.lidars[lidarIndex] = NO_READ_DIST;
 }
 
 void initSonar(int sonarIndex) {
   timesNoRead.sonars[sonarIndex] = TIMES_NO_READ_THRES;
+  sense.sonars[sonarIndex] = NO_READ_DIST;
 }
 
 void initNewSonar(int sonarIndex) {
   timesNoRead.newSonars[sonarIndex] = TIMES_NO_READ_THRES;
+  sense.newSonars[sonarIndex] = NO_READ_DIST;
 
   pinMode(newSonarTriggers[sonarIndex], OUTPUT);
   digitalWrite(newSonarTriggers[sonarIndex], LOW);  
@@ -421,22 +424,22 @@ void loopM4() {
 
 
   // the sonars can interfere with eachother, so they can't be read at the same time
-  static bool isOnNewSonar=true; //goes back and forth between old and new sonar
+  // static bool isOnNewSonar=true; //goes back and forth between old and new sonar
 
   static int m4SonarIndex=0;
-  if(isOnNewSonar){
+  // if(isOnNewSonar){
     if(readNewSonar(m4SonarIndex)) m4SonarIndex++;
     if(m4SonarIndex==numNewSonars) {
       m4SonarIndex=0;
-      isOnNewSonar=false;
+      // isOnNewSonar=false;
     }
-  } else {
-    if(readSonar(m4SonarIndex)) m4SonarIndex++;
-    if(m4SonarIndex==numSonars) {
-      m4SonarIndex=0;
-      isOnNewSonar=true;
-    }
-  }
+  // } else {
+  //   if(readSonar(m4SonarIndex)) m4SonarIndex++;
+  //   if(m4SonarIndex==numSonars) {
+  //     m4SonarIndex=0;
+  //     isOnNewSonar=true;
+  //   }
+  // }
 }
 
 
@@ -883,25 +886,26 @@ void recordSensorHistory(struct sensors& data){
   history[historyIndex++] = data;
   if(historyIndex==SENSOR_HISTORY) historyIndex = 0;
 
-  bool isAllNoRead[numSensors];
+  int timesRead[numSensors];
   for(int s=0; s<numSensors; s++){
     maxData.lidars[s]=0;
     minData.lidars[s]=NO_READ_DIST;
     avgData.lidars[s]=0;
-    isAllNoRead[s]=true;
+    timesRead[s]=0;
     for(int i=0; i<SENSOR_HISTORY; i++){
       if(history[i].lidars[s]<NO_READ_DIST){
         maxData.lidars[s] = max(maxData.lidars[s], history[i].lidars[s]);
         minData.lidars[s] = min(minData.lidars[s], history[i].lidars[s]);
         avgData.lidars[s]+=history[i].lidars[s];
-        isAllNoRead[s]=false;
+        timesRead[s]++;
       }
     }
-    avgData.lidars[s]/=SENSOR_HISTORY;
-    if(isAllNoRead[s]){
+    if(timesRead[s]==0){
       maxData.lidars[s]=NO_READ_DIST;
       avgData.lidars[s]=NO_READ_DIST;
       // min is already NO_READ_DIST if there were no read values
+    } else {
+      avgData.lidars[s]/=timesRead[s];
     }
   }
 }
@@ -945,10 +949,10 @@ void collide(struct sensors& data){
     } else if(millis()-collideTime<COLLIDE_AUTO_OUT_TIME) {
       // off for an amount of time
       collideSaysToStop = false;
+      digitalWrite(bluLED, HIGH); //but still complain
     } else {
-      // back on again? not sure what should happen if we think we are colliding the entire time
+      // back on again. Stop if we think we are colliding the entire time, it probably won't get better
       collideSaysToStop = true;
-      digitalWrite(bluLED, HIGH);
     }
   } else {
     collideWantsToStop=m<COLLIDE_ON_THRES;
@@ -972,8 +976,8 @@ void printCollideInfo() {
   Serial.print("\t   |\t");
 }
 
-#define RUNAWAY_LIDAR_IDEAL_DIST 40 //distance measured is subtracted from this to get force, makes small distances move the robot faster
-#define RUNAWAY_LIDAR_CUTOFF_DIST 40 //further than this is ignored
+#define RUNAWAY_LIDAR_IDEAL_DIST 60 //distance measured is subtracted from this to get force, makes small distances move the robot faster
+#define RUNAWAY_LIDAR_CUTOFF_DIST 60 //further than this is ignored
 #define RUNAWAY_SONAR_IDEAL_DIST 20 //distance measured is subtracted from this to get force, makes small distances move the robot faster
 #define RUNAWAY_SONAR_CUTOFF_DIST 20 //further than this is ignored
 
@@ -1029,17 +1033,17 @@ void loopM7() {
   // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
 
 
-  recordSensorHistory(data);
-  // printSensorData(data);
+  // recordSensorHistory(data);
 
   // Serial.println("--");
-  printSensorData(avgData);
+  // printSensorData(data);
+  // printSensorData(avgData);
   // printSensorData(minData);
   // printSensorData(maxData);
 
 
   //  collide:
-  collide(avgData); //only using lidars for collide for now
+  collide(data); //only using lidars for collide for now
   // printCollideInfo();
   if(collideSaysToStop) {
     moveVelo(0, 0); //stop
@@ -1051,8 +1055,8 @@ void loopM7() {
     // x+=alwaysForwardRandomWanderX();
     // y+=alwaysForwardRandomWanderY();
 
-    float sensorX = getSensorPushX(avgData)*2;
-    float sensorY = getSensorPushY(avgData)*2;
+    float sensorX = getSensorPushX(data)*2;
+    float sensorY = getSensorPushY(data)*2;
     x+=sensorX;
     y+=sensorY;
     if(sensorX!=0 || sensorY!=0) setAvoidLedsOn();
@@ -1061,12 +1065,34 @@ void loopM7() {
     // float angvel = x>0? -y : y;
     float angvel = -atan2(y, x);
 
+    if(angvel>3) angvel = 3;
+    if(angvel<-3) angvel = -3;
+
     float ninety = PI/2;
-    float ang = 4*angvel/5;
-    ang = ang>ninety ? ninety : (ang<-ninety ? -ninety : ang); //clamp
+    float ang = angvel;
+    if(ang>ninety) ang=ninety;
+    if(ang<-ninety) ang=-ninety;
 
+    float linvel = x*5*cos(ang);
 
-    moveVelo(x*5*cos(ang), angvel);
+    // if it wants to turn a little or it is far away, allow movement
+    if(abs(ang)*3<ninety || sensorX*sensorX+sensorY*sensorY>1){
+      moveVelo(linvel, angvel);
+    } else {
+      // if it wants to turn a lot and it is close
+      moveVelo(0, angvel);
+    }
+
+    Serial.print("X: ");
+    Serial.print(sensorX);
+    Serial.print("\tY: ");
+    Serial.print(sensorY);
+    Serial.print("\tlinvel: ");
+    Serial.print(linvel);
+    Serial.print("\tangvel: ");
+    Serial.print(angvel);
+    Serial.println();
+
     
   }
 
