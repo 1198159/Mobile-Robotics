@@ -90,8 +90,6 @@ MultiStepper steppers;//create instance to control multiple steppers at the same
 #define max_accel 10000 //maximum motor acceleration
 
 int pauseTime = 2500;   //time before robot moves in ms
-int stepTime = 500;     //delay time between high and low on step pin
-int wait_time = 3000;   //delay for printing data
 
 #define TRACKWIDTH 216   //distance between the wheels in mm
 #define MOVE_VEL 100     //velocity of movement, mm/s
@@ -233,13 +231,13 @@ void setupM4() {
   RPC.bind("read_sensors", read_sensors);  // bind a method to return the sensor data all at once
 
   // imu
-  #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
-      Wire.begin();
-  #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
-      Fastwire::setup(400, true);
-  #endif
+  // #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+  //     Wire.begin();
+  // #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
+  //     Fastwire::setup(400, true);
+  // #endif
 
-  accelgyro.initialize();
+  // accelgyro.initialize();
 
   for(int i=0; i<numLidars; i++)
     initLidar(i);
@@ -1011,7 +1009,7 @@ float getSensorPushY(struct sensors& data){
 
 //M7 (main processor)
 void setupM7() {
-  int baudrate = 9600; //serial monitor baud rate'
+  int baudrate = 115200; //serial monitor baud rate'
   init_stepper(); //set up stepper motor
 
   attachInterrupt(digitalPinToInterrupt(ltEncoder), LwheelSpeed, CHANGE);    //init the interrupt mode for the left encoder
@@ -1028,78 +1026,134 @@ void setupM7() {
 //M7 (main processor)
 void loopM7() {
 
-  struct sensors data;
-  readSensorData(data); //can be problematic if the sensors struct changes. 
-  // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
-
-
-  // recordSensorHistory(data);
-
-  // Serial.println("--");
-  // printSensorData(data);
-  // printSensorData(avgData);
-  // printSensorData(minData);
-  // printSensorData(maxData);
-
-
-  //  collide:
-  collide(data); //only using lidars for collide for now
-  // printCollideInfo();
-  if(collideSaysToStop) {
-    moveVelo(0, 0); //stop
-  } else {
-
-    float x = 0;
-    float y = 0;
-
-    // x+=alwaysForwardRandomWanderX();
-    // y+=alwaysForwardRandomWanderY();
-
-    float sensorX = getSensorPushX(data)*2;
-    float sensorY = getSensorPushY(data)*2;
-    x+=sensorX;
-    y+=sensorY;
-    if(sensorX!=0 || sensorY!=0) setAvoidLedsOn();
-    else setAvoidLedsOff();
-
-    // float angvel = x>0? -y : y;
-    float angvel = -atan2(y, x);
-
-    if(angvel>3) angvel = 3;
-    if(angvel<-3) angvel = -3;
-
-    float ninety = PI/2;
-    float ang = angvel;
-    if(ang>ninety) ang=ninety;
-    if(ang<-ninety) ang=-ninety;
-
-    float linvel = x*5*cos(ang);
-
-    // if it wants to turn a little or it is far away, allow movement
-    if(abs(ang)*3<ninety || sensorX*sensorX+sensorY*sensorY>1){
-      moveVelo(linvel, angvel);
-    } else {
-      // if it wants to turn a lot and it is close
-      moveVelo(0, angvel);
-    }
-
-    Serial.print("X: ");
-    Serial.print(sensorX);
-    Serial.print("\tY: ");
-    Serial.print(sensorY);
-    Serial.print("\tlinvel: ");
-    Serial.print(linvel);
-    Serial.print("\tangvel: ");
-    Serial.print(angvel);
-    Serial.println();
-
-    
-  }
-
+  static long lastLoopTime = 0;
 
   
 
+
+  // called random wander time for now
+  if((millis() - lastRandomWanderTime) >= 10){
+
+    
+    struct sensors data;
+    readSensorData(data); //can be problematic if the sensors struct changes. 
+    // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
+
+    
+    // recordSensorHistory(data);
+
+    // Serial.println("--");
+    printSensorData(data);
+    // printSensorData(avgData);
+    // printSensorData(minData);
+    // printSensorData(maxData);
+
+
+    //  collide:
+    collide(data); //only using lidars for collide for now
+    // printCollideInfo();
+    if(collideSaysToStop) {
+      moveVelo(0, 0); //stop
+    } else {
+
+      float x = 0;
+      float y = 0;
+
+      x+=alwaysForwardRandomWanderX();
+      y+=alwaysForwardRandomWanderY();
+
+      float sensorX = getSensorPushX(data)*6;
+      float sensorY = getSensorPushY(data)*6;
+      x+=sensorX;
+      y+=sensorY;
+      if(sensorX!=0 || sensorY!=0) setAvoidLedsOn();
+      else setAvoidLedsOff();
+
+      // float angvel = x>0? -y : y;
+      float angvel = -atan2(y, x);
+
+      float ninety = PI/2;
+      float ang = angvel;
+      float angClamped = angvel;
+      if(ang>ninety) angClamped=ninety;
+      if(ang<-ninety) angClamped=-ninety;
+
+      if(angvel>ROT_VEL) angvel = ROT_VEL;
+      if(angvel<-ROT_VEL) angvel = -ROT_VEL;
+
+      float linvel = x*5*cos(angClamped);
+      if(linvel>MOVE_VEL) linvel=MOVE_VEL;
+      if(linvel<-MOVE_VEL) linvel=-MOVE_VEL;
+
+      // m from collide
+      float m = min(data.lidars[0], min(data.lidars[1], min(data.lidars[2], data.lidars[3])));
+
+      int thres = 20;
+
+
+      // edge case detection: wall in front and back, turn 90
+      if(data.lidars[0]<thres && data.lidars[1]<thres && data.lidars[2]>thres && data.lidars[3]>thres){
+        spin(PI/2);
+        delay(200);
+        return;
+      }
+      
+      // edge case detection: wall left and right: forward
+      if(data.lidars[2]<thres && data.lidars[3]<thres && data.lidars[1]>thres && data.lidars[0]>thres){
+        forward(50);
+        // delay(200);
+        return;
+      }
+
+      // edge case detection: wall everywhere, give up
+      if(data.lidars[0]<thres && data.lidars[1]<thres && data.lidars[2]<thres && data.lidars[3]<thres){
+        stop();
+        delay(200);
+        return;
+      }
+
+      // if it wants to turn a little or it is far away, allow movement
+      // if(abs(ang)*6<ninety || m>30){
+      if(abs(ang)*6<ninety || data.lidars[0]>thres){
+        moveVelo(linvel, angvel);
+      } else {
+        // if it wants to turn a lot and it is close, no movement
+        // moveVelo(0, angvel);
+
+        // spin in place, ignoring other stuff
+        spin(ang);
+      }
+
+      // Serial.print("X: ");
+      // Serial.print(sensorX);
+      // Serial.print("\tY: ");
+      // Serial.print(sensorY);
+      // Serial.print("\tlinvel: ");
+      // Serial.print(linvel);
+      // Serial.print("\tangvel: ");
+      // Serial.print(angvel);
+      // Serial.println();
+
+      
+    }
+
+    // moveVelo(100, 0);
+
+
+  
+    
+    lastRandomWanderTime = millis();
+
+    
+    // Serial.print("delta: ");
+    // Serial.print(millis()-lastLoopTime);
+    // lastLoopTime=millis();
+    // Serial.println();
+  } //end if
+
+
   updateMotors();
+
 } //end loop
 
 
