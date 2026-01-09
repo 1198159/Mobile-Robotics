@@ -839,6 +839,16 @@ void setAvoidLedsOff() {
   digitalWrite(ylwLED, LOW);
   // digitalWrite(grnLED, LOW);
 }
+void setFollowLedsOn() {
+  // digitalWrite(redLED, LOW);
+  digitalWrite(ylwLED, HIGH);
+  digitalWrite(grnLED, HIGH);
+}
+void setFollowLedsOff() {
+  // digitalWrite(redLED, LOW);
+  digitalWrite(ylwLED, LOW);
+  digitalWrite(grnLED, LOW);
+}
 
 
 void roughRandomWander() {
@@ -1098,8 +1108,8 @@ void follow(float x, float y, struct sensors& data) {
   float sensorY = getSensorPushY(data)*6;
   x-=sensorX;
   y+=sensorY;
-  // if(sensorX!=0 || sensorY!=0) setAvoidLedsOn();
-  // else setAvoidLedsOff();
+  if(sensorX!=0 || sensorY!=0) setFollowLedsOn();
+  else setFollowLedsOff();
 
   float sonarDiff = 0;
   float sonarSum = 0;
@@ -1182,11 +1192,14 @@ void loopM7() {
       moveVelo(0, 0); //stop
     } else {
 
-      // avoid with random wander
-      // avoid(alwaysForwardRandomWanderX(), alwaysForwardRandomWanderY(), data);
+      // just avoid
+      // avoid(0, 0, data);
 
-      // follow a wall.
-      follow(0, 0, data);
+      // avoid with random wander
+      avoid(alwaysForwardRandomWanderX(), alwaysForwardRandomWanderY(), data);
+
+      // just follow
+      // follow(0, 0, data);
 
       
 
