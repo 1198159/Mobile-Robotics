@@ -51,7 +51,7 @@
   See PlatformIO documentation for proper way to install libraries in Visual Studio
 */
 
-//includew all necessary libraries
+//include all necessary libraries
 #include <Arduino.h>//include for PlatformIO Ide
 #include <AccelStepper.h>//include the stepper motor library
 #include <MultiStepper.h>//include multiple stepper motor library
@@ -96,8 +96,6 @@ int pauseTime = 2500;   //time before robot moves in ms
 #define ROT_VEL 1     //velocity of movement, rad/s
 
 
-#define RAND_FLOAT_STEP_WIDTH 100     //makes it so you get random to 0.01 place
-
 //define encoder pins
 #define LEFT 0        //left encoder
 #define RIGHT 1       //right encoder
@@ -108,21 +106,21 @@ int lastSpeed[2] = {0, 0};          //variable to hold encoder speed (left, righ
 int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since last reset
 
 
-
+// lidar pins
 #define frontLdr 8
 #define backLdr 9
 #define leftLdr 10
 #define rightLdr 11
 
-// old sonars
+// old sonar pins
 #define leftSnr 2
 #define rightSnr 3
 
-// new sonars
-#define purpleSnrTrig 31 //digital
-#define purpleSnrEcho 33 //digital
-#define orangeSnrTrig 30 //digital
-#define orangeSnrEcho 32 //digital
+// new sonar pins
+#define purpleSnrTrig 31
+#define purpleSnrEcho 33
+#define orangeSnrTrig 30
+#define orangeSnrEcho 32
 
 #define numLidars 4
 int lidars[numLidars] = {frontLdr, backLdr, leftLdr, rightLdr};
@@ -148,15 +146,42 @@ unsigned long newSonarTimes[numNewSonars] = {0, 0};
 #define newSonarStartTimeout sonarStartTimeout
 int newSonarStates[numNewSonars] = {0, 0};//0: do trigger start, 1: waiting sonarTriggerDelay micros, 2: reading, 3: waiting sonarAfterReadDelay micros
 
+#define RAND_FLOAT_STEP_WIDTH 100     //makes it so you get random to 0.01 place
+#define RANDOM_WANDER_TIME 1000   //how long random wander waits between generating new targets
+unsigned long lastRandomWanderTime = 0;
+#define RANDOM_WANDER_SCALE 0.2 //how much force random wander causes
+
+#define LOOP_TIME 10 //how long the main processor waits between loops
+unsigned long lastLoopTime = 0;
+
+#define TIMES_NO_READ_THRES 10 // how many times a sensor needs to not read in order to set the distance to far away
+
+#define NO_READ_DIST 1000 // how far is far away when a sensor doesn't read
+
+#define COLLIDE_ON_THRES 5 //distance that causes collide to stop movement
+#define COLLIDE_OFF_THRES 10 //distance that causes collide to resume movement
+#define COLLIDE_AUTO_OFF_TIME 1000 //after a certain amount of time, turn off collide (for page 8 of the lab2pdf)
+#define COLLIDE_AUTO_OUT_TIME 5000 // stay out of collide
+unsigned long collideTime = 0;
+bool collideSaysToStop = false;
+bool collideWantsToStop = false;
+
+#define SENSOR_PUSH_LIDAR_IDEAL_DIST 60 //distance measured is subtracted from this to get force, makes small distances move the robot faster
+#define SENSOR_PUSH_LIDAR_CUTOFF_DIST 60 //further than this is ignored
+#define SENSOR_PUSH_SONAR_IDEAL_DIST 40 //distance measured is subtracted from this to get force, makes small distances move the robot faster
+#define SENSOR_PUSH_SONAR_CUTOFF_DIST 40 //further than this is ignored
+#define followDist 12.5 //follow tries to follow at this distance
+#define SENSOR_PUSH_SCALE 6 //how much force sensor push causes
+
+#define AVOID_SPECIAL_CASE_THRESH 20
+
+#define SONAR_DIFF_SCALE 2 //for follow, impacts how fast the sonar turns the robot
+#define SONAR_SUM_SCALE 25 //for follow, impacts how fast the sonar pulls to or pushes from a wall
 
 // imu
 MPU6050 accelgyro;
 int16_t ax, ay, az;
 int16_t gx, gy, gz;
-
-// Helper Functions
-
-
 
 struct sensors {
   float lidars[numLidars];
@@ -165,14 +190,6 @@ struct sensors {
   // this defines some helper functions that allow RPC to send our struct (I [Berry] found this on a random forum)
   MSGPACK_DEFINE_ARRAY(lidars, sonars, newSonars);  //https://stackoverflow.com/questions/37322145/msgpack-to-pack-structures https://www.appsloveworld.com/cplus/100/391/msgpack-to-pack-structures
 } sense;
-
-
-
-// how many times a sensor needs to not read in order to set the distance to far away
-#define TIMES_NO_READ_THRES 10
-
-// how far is far away when a sensor doesn't read
-#define NO_READ_DIST 1000
 
 // when a sensor sucessfully reads, the corresponding sensor gets set to 0, each time it doesn't read it increments by one
 struct timesNoReadStruct {
@@ -183,7 +200,6 @@ struct timesNoReadStruct {
   // doesn't need to be sent across processors
   // MSGPACK_DEFINE_ARRAY(lidar_front, lidar_back, lidar_left, lidar_right, sonar_left, sonar_right);
 } timesNoRead;
-
 
 // read_lidars is the function used to get lidar data to the M7
 struct sensors read_sensors() {
@@ -204,7 +220,6 @@ float sonarTimeToDist(float t){
 float newSonarTimeToDist(float t){
   return t/58;
 }
-
 
 void initLidar(int lidarIndex) {
   timesNoRead.lidars[lidarIndex] = TIMES_NO_READ_THRES;
@@ -246,7 +261,6 @@ void setupM4() {
   for(int i=0; i<numNewSonars; i++)
     initNewSonar(i);
 }
-
 
 // lidar is easier
 void readLidar(int lidarIndex){
@@ -345,7 +359,6 @@ bool readSonar(int sonarIndex){
   return false;
 }
 
-
 bool readNewSonar(int sonarIndex){
   int read = digitalRead(newSonarEchos[sonarIndex]);
 
@@ -440,7 +453,6 @@ void loopM4() {
   // }
 }
 
-
 void readSensorData(struct sensors& data) {
   data = RPC.call("read_sensors").as<struct sensors>();
 }
@@ -470,7 +482,6 @@ void printSensorData(struct sensors& data) {
 // this may need to be modified to run the state machine.
 // consider usingnamespace rtos Threads as seen in previous example
 void loop() {}
-
 
 //interrupt function to count left encoder ticks
 void LwheelSpeed() { encoder[LEFT] ++;  //count the left wheel encoder interrupts
@@ -659,27 +670,6 @@ void moveVelo(float linvel, float angvel){
 }
 
 /*
-  Pivots around one wheel.
-  Wheel that spins is determined by the turn amount's sign and if it is to goForward
-
-  Linear distance is set to the half the track width times the arc length
-*/
-void pivot(float turnRadians, bool goForward) {
-  if(goForward==turnRadians>0)
-    move(turnRadians*TRACKWIDTH/2, turnRadians);  
-  else
-    move(-turnRadians*TRACKWIDTH/2, turnRadians);  
-}
-
-/*
-  Pivots around one wheel.
-  Wheel that spins is determined by the turn amount's sign, always prefers going forwards
-*/
-void pivot(float turnRadians) {
-  pivot(turnRadians, true);
-}
-
-/*
   Spins in place, turnRadians amount.
   Both mostors spin, opposite directions. No linear distance is traveled
   Positive is counterclockwise
@@ -687,19 +677,6 @@ void pivot(float turnRadians) {
 */
 void spin(float turnRadians) {
   move(0, turnRadians);
-}
-
-/*
-  Drive along a circle.
-  circleRadius positive means go around a circle forward, negative is backwards
-  turnRadians positive means turning left, negative is right
-
-  Linear distance is set to the circle radius times the arc length
-*/
-void turn(float turnRadians, float circleRadius) {
-  float dist = circleRadius*turnRadians;
-  if(dist<0) dist = -dist;
-  move(dist, turnRadians);
 }
 
 /*
@@ -711,113 +688,19 @@ void forward(float distanceMM) {
 }
 
 /*
-  Moves the robot backward, distanceMM milimeters.
-  Blocks until motors are done moving.
-*/
-void reverse(float distanceMM) {
-  forward(-distanceMM);
-}
-
-/*
   Stops the movement of the robot.
 */
 void stop() {
   moveMotors(0,0,0,0);
 }
 
-
-/*
-  Turns around a full circle.
-  Positive diam is going around left, negative is going around right
-  Turns the red led on.
-
-  All math is handled by the turn() function
-*/
-void moveCircle(float diam) {
-  digitalWrite(redLED, HIGH);//turn on red LED
-  if(diam<0)
-    turn(-2*PI, diam/2);
-  else
-    turn(2*PI, diam/2);
-  digitalWrite(redLED, LOW);//turn off red LED
-}
-
-/*
-  The moveFigure8() function takes the diameter in inches as the input. It uses the moveCircle() function
-  twice, left then right, to create a figure 8 with circles of the given diameter.
-  Turns the red and yellow led on.
-*/
-void moveFigure8(float diam) {
-  digitalWrite(ylwLED, HIGH);//turn on yellow LED
-  moveCircle(diam);
-  moveCircle(-diam);
-  digitalWrite(ylwLED, LOW);//turn off yellow LED
-}
-
-/*
-  Points the robot in the angle given .
-  Turns on and off the green led.
-*/
-void goToAngle(float angleRadians){
-  digitalWrite(grnLED, HIGH);//turn on green LED
-  spin(angleRadians); //handles angle logic
-  digitalWrite(grnLED, LOW);//turn off green LED
-}
-
-
-
-/*
-  Points the position in mm.
-  Pos x is forward, pos y is to the left (Dr. Berry coordinate system)
-  Turns on and off the green and yellow leds.
-*/
-void goToGoal(float x, float y){
-  digitalWrite(ylwLED, HIGH);//turn on yellow LED
-  goToAngle(atan2(y, x)); //turns on green
-  digitalWrite(grnLED, HIGH);//keep on green LED
-  forward(hypot(y, x));
-  digitalWrite(grnLED, LOW);//turn off green LED
-  digitalWrite(ylwLED, LOW);//turn off yellow LED
-}
-
-/*
-  Drives a square, forward then right.
-  Turns on and off the red, green and yellow leds.
-*/
-void square(float len) {
-  digitalWrite(redLED, HIGH);//turn on red LED
-  digitalWrite(ylwLED, HIGH);//turn on yellow LED
-  digitalWrite(grnLED, HIGH);//keep on green LED
-  for(int i=0; i<4; i++){
-    forward(len);
-    delay(100);
-    spin(-PI/2); //turn right
-    delay(100);
-  }
-  digitalWrite(redLED, LOW);//turn off red LED
-  digitalWrite(ylwLED, LOW);//turn off yellow LED
-  digitalWrite(grnLED, LOW);//keep off green LED
-}
-
-unsigned long lastRandomWanderTime = 0;
-
-
-
 float randFloat(float low, float high){
   return random(low*RAND_FLOAT_STEP_WIDTH, high*RAND_FLOAT_STEP_WIDTH) * 1.0f / RAND_FLOAT_STEP_WIDTH;
 }
 
-
-#define ROUGH_RANDOM_WANDER_FORWARD_BIAS 3            //prefer going forwards this many times as much as going backwards
-#define SMOOTH_RANDOM_WANDER_FORWARD_BIAS 2            //prefer going forwards this many times as much as going backwards
-
-
 void setRandomWanderLedsOn() {
-  // digitalWrite(redLED, LOW);
-  // digitalWrite(ylwLED, LOW);
   digitalWrite(grnLED, HIGH);
 }
-
 
 void setCollideLedsOn() {
   digitalWrite(redLED, HIGH);
@@ -828,122 +711,36 @@ void setCollideLedsOff() {
   digitalWrite(redLED, LOW);
 }
 
-
 void setAvoidLedsOn() {
-  // digitalWrite(redLED, LOW);
   digitalWrite(ylwLED, HIGH);
-  // digitalWrite(grnLED, LOW);
 }
 void setAvoidLedsOff() {
-  // digitalWrite(redLED, LOW);
   digitalWrite(ylwLED, LOW);
-  // digitalWrite(grnLED, LOW);
 }
 void setFollowLedsOn() {
-  // digitalWrite(redLED, LOW);
   digitalWrite(ylwLED, HIGH);
   digitalWrite(grnLED, HIGH);
 }
 void setFollowLedsOff() {
-  // digitalWrite(redLED, LOW);
   digitalWrite(ylwLED, LOW);
   digitalWrite(grnLED, LOW);
 }
 
-
-void roughRandomWander() {
-  setRandomWanderLedsOn();
-  if((millis() - lastRandomWanderTime) >= 2000){
-    moveVelo(randFloat(-50, ROUGH_RANDOM_WANDER_FORWARD_BIAS*50), randFloat(-ROT_VEL, ROT_VEL));
-
-    lastRandomWanderTime = millis();
-  } //end if
-}
-
-
-
-
 float alwaysForwardRandomWanderY() {
   setRandomWanderLedsOn();
   static float y = 0;
-  if((millis() - lastRandomWanderTime) >= 1000){
+  if((millis() - lastRandomWanderTime) >= RANDOM_WANDER_TIME){
     y = randFloat(-MOVE_VEL, MOVE_VEL);
 
     lastRandomWanderTime = millis();
   }
-  return y/5;
+  return y*RANDOM_WANDER_SCALE;
 }
 
 float alwaysForwardRandomWanderX() {
   setRandomWanderLedsOn();
-  return MOVE_VEL/5; //always forward
+  return MOVE_VEL*RANDOM_WANDER_SCALE; //always forward
 }
-
-#define SENSOR_HISTORY 5
-int historyIndex = 0;
-struct sensors history[SENSOR_HISTORY];
-struct sensors maxData; //would min and max just be noise?
-struct sensors minData;
-//if we were just doing avg, could do it more efficiently: change avg by (new value-old value)/SENSOR_HISTORY
-//but we also want to set values to NO_READ_DIST if they were all NO_READ_DIST, and skip NO_READ_DIST values if some aren't
-struct sensors avgData; 
-#define numSensors numLidars+numSonars+numNewSonars
-
-
-void recordSensorHistory(struct sensors& data){
-  history[historyIndex++] = data;
-  if(historyIndex==SENSOR_HISTORY) historyIndex = 0;
-
-  int timesRead[numSensors];
-  for(int s=0; s<numSensors; s++){
-    maxData.lidars[s]=0;
-    minData.lidars[s]=NO_READ_DIST;
-    avgData.lidars[s]=0;
-    timesRead[s]=0;
-    for(int i=0; i<SENSOR_HISTORY; i++){
-      if(history[i].lidars[s]<NO_READ_DIST){
-        maxData.lidars[s] = max(maxData.lidars[s], history[i].lidars[s]);
-        minData.lidars[s] = min(minData.lidars[s], history[i].lidars[s]);
-        avgData.lidars[s]+=history[i].lidars[s];
-        timesRead[s]++;
-      }
-    }
-    if(timesRead[s]==0){
-      maxData.lidars[s]=NO_READ_DIST;
-      avgData.lidars[s]=NO_READ_DIST;
-      // min is already NO_READ_DIST if there were no read values
-    } else {
-      avgData.lidars[s]/=timesRead[s];
-    }
-  }
-}
-
-float smoothRandomWanderLinVel = 0;
-float smoothRandomWanderAngVel = 0;
-void smoothRandomWander(){
-  setRandomWanderLedsOn();
-  if((millis() - lastRandomWanderTime) >= 10){
-    smoothRandomWanderLinVel+=randFloat(-20, SMOOTH_RANDOM_WANDER_FORWARD_BIAS*20);
-    smoothRandomWanderAngVel+=randFloat(-0.2, 0.2);
-
-    if(smoothRandomWanderLinVel>MOVE_VEL)smoothRandomWanderLinVel=MOVE_VEL;
-    if(-smoothRandomWanderLinVel>MOVE_VEL)smoothRandomWanderLinVel=-MOVE_VEL;
-    if(smoothRandomWanderAngVel>ROT_VEL)smoothRandomWanderAngVel=ROT_VEL;
-    if(-smoothRandomWanderAngVel>ROT_VEL)smoothRandomWanderAngVel=-ROT_VEL;
-
-    moveVelo(smoothRandomWanderLinVel, smoothRandomWanderAngVel);
-  
-    lastRandomWanderTime = millis();
-  } //end if
-}
-
-#define COLLIDE_ON_THRES 5 //distance that causes collide to stop movement
-#define COLLIDE_OFF_THRES 10 //distance that causes collide to resume movement
-#define COLLIDE_AUTO_OFF_TIME 1000 //after a certain amount of time, turn off collide (for page 8 of the lab2pdf)
-#define COLLIDE_AUTO_OUT_TIME 5000 // stay out of collide
-unsigned long collideTime = 0;
-bool collideSaysToStop = false;
-bool collideWantsToStop = false;
 
 // if the sensors say something is close, sets collideSaysToStop to true
 // currently only using lidars because sonars don't work well for this (for some reason)
@@ -977,45 +774,29 @@ void collide(struct sensors& data){
   }
 }
 
-
 void printCollideInfo() {
   Serial.print(collideSaysToStop?"   is":"isn't");
   Serial.print(" colliding");
   Serial.print("\t   |\t");
 }
 
-#define RUNAWAY_LIDAR_IDEAL_DIST 60 //distance measured is subtracted from this to get force, makes small distances move the robot faster
-#define RUNAWAY_LIDAR_CUTOFF_DIST 60 //further than this is ignored
-#define RUNAWAY_SONAR_IDEAL_DIST 40 //distance measured is subtracted from this to get force, makes small distances move the robot faster
-#define RUNAWAY_SONAR_CUTOFF_DIST 40 //further than this is ignored
-
-
 // x is forward and backward
 float getSensorPushX(struct sensors& data){
   float x = 0;
-  if(data.lidars[0]<RUNAWAY_LIDAR_CUTOFF_DIST) x-=RUNAWAY_LIDAR_IDEAL_DIST-data.lidars[0];
-  if(data.lidars[1]<RUNAWAY_LIDAR_CUTOFF_DIST) x+=RUNAWAY_LIDAR_IDEAL_DIST-data.lidars[1];
+  if(data.lidars[0]<SENSOR_PUSH_LIDAR_CUTOFF_DIST) x-=SENSOR_PUSH_LIDAR_IDEAL_DIST-data.lidars[0];
+  if(data.lidars[1]<SENSOR_PUSH_LIDAR_CUTOFF_DIST) x+=SENSOR_PUSH_LIDAR_IDEAL_DIST-data.lidars[1];
   
-  // if(data.sonars[0]<RUNAWAY_SONAR_CUTOFF_DIST) x-=RUNAWAY_SONAR_IDEAL_DIST-data.sonars[0];
-  // if(data.sonars[1]<RUNAWAY_SONAR_CUTOFF_DIST) x-=RUNAWAY_SONAR_IDEAL_DIST-data.sonars[1];
-
-  return x;
+  return x*SENSOR_PUSH_SCALE;
 }
-
 
 // y is left and right
 float getSensorPushY(struct sensors& data){
   float y = 0;
-  if(data.lidars[2]<RUNAWAY_LIDAR_CUTOFF_DIST) y+=RUNAWAY_LIDAR_IDEAL_DIST-data.lidars[2];
-  if(data.lidars[3]<RUNAWAY_LIDAR_CUTOFF_DIST) y-=RUNAWAY_LIDAR_IDEAL_DIST-data.lidars[3];
+  if(data.lidars[2]<SENSOR_PUSH_LIDAR_CUTOFF_DIST) y+=SENSOR_PUSH_LIDAR_IDEAL_DIST-data.lidars[2];
+  if(data.lidars[3]<SENSOR_PUSH_LIDAR_CUTOFF_DIST) y-=SENSOR_PUSH_LIDAR_IDEAL_DIST-data.lidars[3];
   
-  // if(data.sonars[0]<RUNAWAY_SONAR_CUTOFF_DIST) y+=RUNAWAY_SONAR_IDEAL_DIST-data.sonars[0];
-  // if(data.sonars[1]<RUNAWAY_SONAR_CUTOFF_DIST) y-=RUNAWAY_SONAR_IDEAL_DIST-data.sonars[1];
-
-  return y;
+  return y*SENSOR_PUSH_SCALE;
 }
-
-
 
 //M7 (main processor)
 void setupM7() {
@@ -1033,19 +814,15 @@ void setupM7() {
   Serial.println("Robot starting...Put ON TEST STAND");
 }
 
-
-unsigned long lastLoopTime = 0;
-
 // takes a base x and y to go to, changes it for avoiding obstacles
 void avoid(float x, float y, struct sensors& data) {
-  float sensorX = getSensorPushX(data)*6;
-  float sensorY = getSensorPushY(data)*6;
+  float sensorX = getSensorPushX(data);
+  float sensorY = getSensorPushY(data);
   x+=sensorX;
   y+=sensorY;
   if(sensorX!=0 || sensorY!=0) setAvoidLedsOn();
   else setAvoidLedsOff();
 
-  // float angvel = x>0? -y : y;
   float angvel = -atan2(y, x);
 
   float ninety = PI/2;
@@ -1064,25 +841,21 @@ void avoid(float x, float y, struct sensors& data) {
   // m from collide
   float m = min(data.lidars[0], min(data.lidars[1], min(data.lidars[2], data.lidars[3])));
 
-  int thres = 20;
-
-
   // edge case detection: wall in front and back, turn 90
-  if(data.lidars[0]<thres && data.lidars[1]<thres && data.lidars[2]>thres && data.lidars[3]>thres){
+  if(data.lidars[0]<AVOID_SPECIAL_CASE_THRESH && data.lidars[1]<AVOID_SPECIAL_CASE_THRESH && data.lidars[2]>AVOID_SPECIAL_CASE_THRESH && data.lidars[3]>AVOID_SPECIAL_CASE_THRESH){
     spin(PI/2);
     delay(200);
     return;
   }
   
   // edge case detection: wall left and right: forward
-  if(data.lidars[2]<thres && data.lidars[3]<thres && data.lidars[1]>thres && data.lidars[0]>thres){
+  if(data.lidars[2]<AVOID_SPECIAL_CASE_THRESH && data.lidars[3]<AVOID_SPECIAL_CASE_THRESH && data.lidars[1]>AVOID_SPECIAL_CASE_THRESH && data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
     forward(50);
-    // delay(200);
     return;
   }
 
   // edge case detection: wall everywhere, give up
-  if(data.lidars[0]<thres && data.lidars[1]<thres && data.lidars[2]<thres && data.lidars[3]<thres){
+  if(data.lidars[0]<AVOID_SPECIAL_CASE_THRESH && data.lidars[1]<AVOID_SPECIAL_CASE_THRESH && data.lidars[2]<AVOID_SPECIAL_CASE_THRESH && data.lidars[3]<AVOID_SPECIAL_CASE_THRESH){
     stop();
     delay(200);
     return;
@@ -1090,22 +863,17 @@ void avoid(float x, float y, struct sensors& data) {
 
   // if it wants to turn a little or it is far away, allow movement
   // if(abs(ang)*6<ninety || m>30){
-  if(abs(ang)*6<ninety || data.lidars[0]>thres){
+  if(abs(ang)*6<ninety || data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
     moveVelo(linvel, angvel);
   } else {
-    // if it wants to turn a lot and it is close, no movement
-    // moveVelo(0, angvel);
-
     // spin in place, ignoring other stuff
     spin(ang);
   }
 }
 
-
-#define followDist 12.5
 void follow(float x, float y, struct sensors& data) {
-  float sensorX = getSensorPushX(data)*6;
-  float sensorY = getSensorPushY(data)*6;
+  float sensorX = getSensorPushX(data);
+  float sensorY = getSensorPushY(data);
   x-=sensorX;
   y+=sensorY;
   if(sensorX!=0 || sensorY!=0) setFollowLedsOn();
@@ -1114,18 +882,18 @@ void follow(float x, float y, struct sensors& data) {
   float sonarDiff = 0;
   float sonarSum = 0;
   int countSonars = 0;
-  if(data.newSonars[0]<RUNAWAY_SONAR_CUTOFF_DIST) {
-    sonarDiff-=RUNAWAY_SONAR_IDEAL_DIST-data.newSonars[0];
-    sonarSum+=RUNAWAY_SONAR_IDEAL_DIST-data.newSonars[0];
+  if(data.newSonars[0]<SENSOR_PUSH_SONAR_CUTOFF_DIST) {
+    sonarDiff-=SENSOR_PUSH_SONAR_IDEAL_DIST-data.newSonars[0];
+    sonarSum+=SENSOR_PUSH_SONAR_IDEAL_DIST-data.newSonars[0];
     countSonars++;
   }
-  if(data.newSonars[1]<RUNAWAY_SONAR_CUTOFF_DIST) {
-    sonarDiff+=RUNAWAY_SONAR_IDEAL_DIST-data.newSonars[1];
-    sonarSum+=RUNAWAY_SONAR_IDEAL_DIST-data.newSonars[1];
+  if(data.newSonars[1]<SENSOR_PUSH_SONAR_CUTOFF_DIST) {
+    sonarDiff+=SENSOR_PUSH_SONAR_IDEAL_DIST-data.newSonars[1];
+    sonarSum+=SENSOR_PUSH_SONAR_IDEAL_DIST-data.newSonars[1];
     countSonars++;
   }
 
-  y-=sonarDiff*2;
+  y-=sonarDiff*SONAR_DIFF_SCALE;
   
 
   // float angvel = x>0? -y : y;
@@ -1140,26 +908,18 @@ void follow(float x, float y, struct sensors& data) {
   if(angvel>ROT_VEL) angvel = ROT_VEL;
   if(angvel<-ROT_VEL) angvel = -ROT_VEL;
 
-  float linvel = (followDist-sonarSum/2)*25;
-  if(countSonars<2) linvel=0;
+  float linvel = (followDist-sonarSum/2)*SONAR_SUM_SCALE;
+  if(countSonars<numNewSonars) linvel=0;
   if(linvel>MOVE_VEL) linvel=MOVE_VEL;
   if(linvel<-MOVE_VEL) linvel=-MOVE_VEL;
 
   // m from collide
   float m = min(data.lidars[0], min(data.lidars[1], min(data.lidars[2], data.lidars[3])));
 
-  int thres = 20;
-
-
-
   // if it wants to turn a little or it is far away, allow movement
-  // if(abs(ang)*6<ninety || m>30){
-  if(abs(ang)*6<ninety || data.lidars[0]>thres){
+  if(abs(ang)*6<ninety || data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
     moveVelo(linvel, angvel);
   } else {
-    // if it wants to turn a lot and it is close, no movement
-    // moveVelo(0, angvel);
-
     // spin in place, ignoring other stuff
     spin(ang);
   }
@@ -1167,23 +927,13 @@ void follow(float x, float y, struct sensors& data) {
 
 //M7 (main processor)
 void loopM7() {
-
-  // called random wander time for now
-  if((millis() - lastLoopTime) >= 10){
+  if((millis() - lastLoopTime) >= LOOP_TIME){
 
     struct sensors data;
     readSensorData(data); //can be problematic if the sensors struct changes. 
     // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
 
-    
-    // recordSensorHistory(data);
-
-    // Serial.println("--");
     printSensorData(data);
-    // printSensorData(avgData);
-    // printSensorData(minData);
-    // printSensorData(maxData);
-
 
     //  collide:
     collide(data); //only using lidars for collide for now
@@ -1201,19 +951,14 @@ void loopM7() {
       // just follow
       // follow(0, 0, data);
 
-      
-
     }
 
-  
-    
     lastLoopTime = millis();
   } //end if
 
 
   updateMotors();
 } //end loop
-
 
 //setup function for both processors
 void setup() {
