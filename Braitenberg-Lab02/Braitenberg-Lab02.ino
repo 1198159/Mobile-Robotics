@@ -174,6 +174,11 @@ bool collideWantsToStop = false;
 #define SENSOR_PUSH_SCALE 6 //how much force sensor push causes
 
 #define AVOID_SPECIAL_CASE_THRESH 20
+#define NINETY_DEGREES PI/2
+#define AVOID_SPECIAL_CASE_ANGLE_THRESH NINETY_DEGREES/6
+#define AVOID_LINVEL_SCALE 5
+#define AVOID_SPECIAL_CASE_WAIT_TIME_LONG 200
+#define AVOID_SPECIAL_CASE_WAIT_TIME_SHORT 50
 
 #define SONAR_DIFF_SCALE 2 //for follow, impacts how fast the sonar turns the robot
 #define SONAR_SUM_SCALE 25 //for follow, impacts how fast the sonar pulls to or pushes from a wall
@@ -825,16 +830,15 @@ void avoid(float x, float y, struct sensors& data) {
 
   float angvel = -atan2(y, x);
 
-  float ninety = PI/2;
   float ang = angvel;
   float angClamped = angvel;
-  if(ang>ninety) angClamped=ninety;
-  if(ang<-ninety) angClamped=-ninety;
+  if(ang>NINETY_DEGREES) angClamped=NINETY_DEGREES;
+  if(ang<-NINETY_DEGREES) angClamped=-NINETY_DEGREES;
 
   if(angvel>ROT_VEL) angvel = ROT_VEL;
   if(angvel<-ROT_VEL) angvel = -ROT_VEL;
 
-  float linvel = x*5*cos(angClamped);
+  float linvel = x*AVOID_LINVEL_SCALE*cos(angClamped);
   if(linvel>MOVE_VEL) linvel=MOVE_VEL;
   if(linvel<-MOVE_VEL) linvel=-MOVE_VEL;
 
@@ -843,27 +847,26 @@ void avoid(float x, float y, struct sensors& data) {
 
   // edge case detection: wall in front and back, turn 90
   if(data.lidars[0]<AVOID_SPECIAL_CASE_THRESH && data.lidars[1]<AVOID_SPECIAL_CASE_THRESH && data.lidars[2]>AVOID_SPECIAL_CASE_THRESH && data.lidars[3]>AVOID_SPECIAL_CASE_THRESH){
-    spin(PI/2);
-    delay(200);
+    spin(NINETY_DEGREES);
+    delay(AVOID_SPECIAL_CASE_WAIT_TIME_LONG);
     return;
   }
   
   // edge case detection: wall left and right: forward
   if(data.lidars[2]<AVOID_SPECIAL_CASE_THRESH && data.lidars[3]<AVOID_SPECIAL_CASE_THRESH && data.lidars[1]>AVOID_SPECIAL_CASE_THRESH && data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
-    forward(50);
+    forward(AVOID_SPECIAL_CASE_WAIT_TIME_SHORT);
     return;
   }
 
   // edge case detection: wall everywhere, give up
   if(data.lidars[0]<AVOID_SPECIAL_CASE_THRESH && data.lidars[1]<AVOID_SPECIAL_CASE_THRESH && data.lidars[2]<AVOID_SPECIAL_CASE_THRESH && data.lidars[3]<AVOID_SPECIAL_CASE_THRESH){
     stop();
-    delay(200);
+    delay(AVOID_SPECIAL_CASE_WAIT_TIME_LONG);
     return;
   }
 
   // if it wants to turn a little or it is far away, allow movement
-  // if(abs(ang)*6<ninety || m>30){
-  if(abs(ang)*6<ninety || data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
+  if(abs(ang)<AVOID_SPECIAL_CASE_ANGLE_THRESH || data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
     moveVelo(linvel, angvel);
   } else {
     // spin in place, ignoring other stuff
@@ -899,12 +902,7 @@ void follow(float x, float y, struct sensors& data) {
   // float angvel = x>0? -y : y;
   float angvel = atan2(y, x);
 
-  float ninety = PI/2;
   float ang = angvel;
-  float angClamped = angvel/4;
-  if(angClamped>ninety) angClamped=ninety;
-  if(angClamped<-ninety) angClamped=-ninety;
-
   if(angvel>ROT_VEL) angvel = ROT_VEL;
   if(angvel<-ROT_VEL) angvel = -ROT_VEL;
 
@@ -917,7 +915,7 @@ void follow(float x, float y, struct sensors& data) {
   float m = min(data.lidars[0], min(data.lidars[1], min(data.lidars[2], data.lidars[3])));
 
   // if it wants to turn a little or it is far away, allow movement
-  if(abs(ang)*6<ninety || data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
+  if(abs(ang)<AVOID_SPECIAL_CASE_ANGLE_THRESH || data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
     moveVelo(linvel, angvel);
   } else {
     // spin in place, ignoring other stuff
