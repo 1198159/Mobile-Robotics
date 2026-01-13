@@ -444,12 +444,13 @@ void spin(int direction) {
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
-void turn(int direction) {
-  int positionAmt = distanceToSteps(0); //TODO
-  int velocityAmt = distanceToSteps(0); //TODO
+void turn(int distance) {
+  int positionAmt = distanceToSteps(abs(distance)); //TODO
+  int velocityAmt = distanceToSteps(MOVE_VEL); //TODO
+  
   int turnScale = 2; //TODO
   
-  if(direction > 0){
+  if(distance > 0){
     move(positionAmt, velocityAmt, positionAmt/turnScale, velocityAmt/turnScale);
   } else {
      move(positionAmt/turnScale, velocityAmt/turnScale, positionAmt, velocityAmt);
@@ -522,7 +523,7 @@ void loop()
   // move4(); //move to target position with 2 different speeds - absolute position
    //move5(); //move continuously with 2 different speeds
    // move6(); //move to target position with 2 different speeds - relative position
-  forward(600);
+  turn(600);
   //Uncomment to read Encoder Data (uncomment to read on serial monitor)
   //print_encoder_data();   //prints encoder data
 
