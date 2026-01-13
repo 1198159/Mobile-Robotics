@@ -44,6 +44,8 @@
 #include <Arduino.h>//include for PlatformIO Ide
 #include <AccelStepper.h>//include the stepper motor library
 #include <MultiStepper.h>//include multiple stepper motor library
+#include <wallFollow.h>
+
 #include "RPC.h" //for other core
 
 
