@@ -1,0 +1,473 @@
+/*
+  Braitenberg-Lab01.ino
+  Ethan Harden
+  Alex Stedman
+  Alex Yim
+  12/12/25
+
+  This program will introduce using the stepper motor library to create motion algorithms for the robot, for lab 1.
+  The motions will be go to angle, go to goal, move in a circle, square, figure eight and basic movements (stop, forward, spin, reverse, turn)
+  The primary functions created are
+  moveCircle - given the diameter in inches and direction of clockwise or counterclockwise, move the robot in a circle with that diameter
+  moveFigure8 - given the diameter in inches, use the moveCircle() function with direction input to create a Figure 8
+  forward, reverse - both wheels move with same velocity, same direction
+  pivot- one wheel stationary, one wheel moves forward or back
+  spin - both wheels move with same velocity opposite direction
+  turn - both wheels move with same direction different velocity
+  stop -both wheels stationary
+
+  Interrupts
+  https://www.arduino.cc/reference/en/language/functions/external-interrupts/attachinterrupt/
+  https://www.arduino.cc/en/Tutorial/CurieTimer1Interrupt
+  https://playground.arduino.cc/code/timer1
+  https://playground.arduino.cc/Main/TimerPWMCheatsheet
+  http://arduinoinfo.mywikis.net/wiki/HOME
+
+  Hardware Connections:
+  Arduino pin mappings: https://docs.arduino.cc/tutorials/giga-r1-wifi/cheat-sheet#pins
+  A4988 Stepper Motor Driver Pinout: https://www.pololu.com/product/1182 
+
+  digital pin 48 - enable PIN on A4988 Stepper Motor Driver StepSTICK
+  digital pin 50 - right stepper motor step pin
+  digital pin 51 - right stepper motor direction pin
+  digital pin 52 - left stepper motor step pin
+  digital pin 53 - left stepper motor direction pin
+  digital pin 13 - enable LED on microcontroller
+
+  digital pin 5 - red LED in series with 220 ohm resistor
+  digital pin 6 - green LED in series with 220 ohm resistor
+  digital pin 7 - yellow LED in series with 220 ohm resistor
+  digital pin 4 - blue LED in series with 220 ohm resistor
+
+  digital pin 18 - left encoder pin
+  digital pin 19 - right encoder pin
+
+  INSTALL THE LIBRARY
+  AccelStepper Library: https://www.airspayce.com/mikem/arduino/AccelStepper/
+  
+  Sketch->Include Library->Manage Libraries...->AccelStepper->Include
+  OR
+  Sketch->Include Library->Add .ZIP Library...->AccelStepper-1.53.zip
+  See PlatformIO documentation for proper way to install libraries in Visual Studio
+*/
+
+//includew all necessary libraries
+#include <Arduino.h>//include for PlatformIO Ide
+#include <AccelStepper.h>//include the stepper motor library
+#include <MultiStepper.h>//include multiple stepper motor library
+
+//state LEDs connections
+#define redLED 5            //red LED for displaying states
+#define grnLED 6            //green LED for displaying states
+#define ylwLED 7            //yellow LED for displaying states
+#define bluLED 4            //blue LED for displaying states
+#define enableLED 13        //stepper enabled LED
+int leds[4] = {redLED,grnLED,ylwLED,bluLED};      //array of LED pin numbers
+
+//define motor pin numbers
+#define stepperEnable 48    //stepper enable pin on stepStick 
+#define rtStepPin 50 //right stepper motor step pin 
+#define rtDirPin 51  // right stepper motor direction pin 
+#define ltStepPin 52 //left stepper motor step pin 
+#define ltDirPin 53  //left stepper motor direction pin
+
+AccelStepper stepperRight(AccelStepper::DRIVER, rtStepPin, rtDirPin);//create instance of right stepper motor object (2 driver pins, low to high transition step pin 52, direction input pin 53 (high means forward)
+AccelStepper stepperLeft(AccelStepper::DRIVER, ltStepPin, ltDirPin);//create instance of left stepper motor object (2 driver pins, step pin 50, direction input pin 51)
+MultiStepper steppers;//create instance to control multiple steppers at the same time
+
+#define stepperEnTrue false //variable for enabling stepper motor
+#define stepperEnFalse true //variable for disabling stepper motor
+#define max_speed 1500 //maximum stepper motor speed
+#define max_accel 10000 //maximum motor acceleration
+
+int pauseTime = 2500;   //time before robot moves in ms
+int stepTime = 500;     //delay time between high and low on step pin
+int wait_time = 3000;   //delay for printing data
+
+#define TRACKWIDTH 216   //distance between the wheels in mm
+#define MOVE_VEL 100     //velocity of movement, mm/s
+#define ROT_VEL 1     //velocity of movement, rad/s
+
+//define encoder pins
+#define LEFT 0        //left encoder
+#define RIGHT 1       //right encoder
+const int ltEncoder = 18;        //left encoder pin (Mega Interrupt pins 2,3 18,19,20,21)
+const int rtEncoder = 19;        //right encoder pin (Mega Interrupt pins 2,3 18,19,20,21)
+volatile long encoder[2] = {0, 0};  //interrupt variable to hold number of encoder counts (left, right)
+int lastSpeed[2] = {0, 0};          //variable to hold encoder speed (left, right)
+int accumTicks[2] = {0, 0};         //variable to hold accumulated ticks since last reset
+
+
+// Helper Functions
+
+//interrupt function to count left encoder ticks
+void LwheelSpeed()
+{
+  encoder[LEFT] ++;  //count the left wheel encoder interrupts
+}
+
+//interrupt function to count right encoder ticks
+void RwheelSpeed()
+{
+  encoder[RIGHT] ++; //count the right wheel encoder interrupts
+}
+
+// turns off all 4 leds: red, yellow, gree, blue
+void allOFF(){
+  for (int l : leds)
+    digitalWrite(l,LOW);
+  
+}
+
+//function to set all stepper motor variables, outputs and LEDs
+void init_stepper(){
+  pinMode(rtStepPin, OUTPUT);//sets pin as output
+  pinMode(rtDirPin, OUTPUT);//sets pin as output
+  pinMode(ltStepPin, OUTPUT);//sets pin as output
+  pinMode(ltDirPin, OUTPUT);//sets pin as output
+  pinMode(stepperEnable, OUTPUT);//sets pin as output
+  digitalWrite(stepperEnable, stepperEnFalse);//turns off the stepper motor driver
+  pinMode(enableLED, OUTPUT);//set enable LED as output
+  digitalWrite(enableLED, LOW);//turn off enable LED
+  for (int l : leds) //set all leds to output
+    pinMode(l,OUTPUT);
+  for (int l : leds) //turn on all leds
+    digitalWrite(l, HIGH);
+  delay(pauseTime / 5); //wait 0.5 seconds
+  for (int l : leds) //turn off all leds
+    digitalWrite(l, LOW);
+
+  stepperRight.setMaxSpeed(max_speed);//set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
+  stepperRight.setAcceleration(max_accel);//set desired acceleration in steps/s^2
+  stepperLeft.setMaxSpeed(max_speed);//set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
+  stepperLeft.setAcceleration(max_accel);//set desired acceleration in steps/s^2
+  steppers.addStepper(stepperRight);//add right motor to MultiStepper
+  steppers.addStepper(stepperLeft);//add left motor to MultiStepper
+  digitalWrite(stepperEnable, stepperEnTrue);//turns on the stepper motor driver
+  digitalWrite(enableLED, HIGH);//turn on enable LED
+}
+
+//function prints encoder data to serial monitor
+void print_encoder_data() {
+  static unsigned long timer = 0;                           //print manager timer
+  if (millis() - timer > 100) {                             //print encoder data every 100 ms or so
+    lastSpeed[LEFT] = encoder[LEFT];                        //record the latest left speed value
+    lastSpeed[RIGHT] = encoder[RIGHT];                      //record the latest right speed value
+    accumTicks[LEFT] = accumTicks[LEFT] + encoder[LEFT];    //record accumulated left ticks
+    accumTicks[RIGHT] = accumTicks[RIGHT] + encoder[RIGHT]; //record accumulated right ticks
+    Serial.println("Encoder value:");
+    Serial.print("\tLeft:\t");
+    Serial.print(encoder[LEFT]);
+    Serial.print("\tRight:\t");
+    Serial.println(encoder[RIGHT]);
+    Serial.println("Accumulated Ticks: ");
+    Serial.print("\tLeft:\t");
+    Serial.print(accumTicks[LEFT]);
+    Serial.print("\tRight:\t");
+    Serial.println(accumTicks[RIGHT]);
+    encoder[LEFT] = 0;                          //clear the left encoder data buffer
+    encoder[RIGHT] = 0;                         //clear the right encoder data buffer
+    timer = millis();                           //record current time since program started
+  }
+}
+  
+/*
+General purpose function to motor moves (motor positions and velocities)
+*/
+void moveMotors(long leftPosition, float leftVelocity, long rightPosition, float rightVelocity){
+ 
+  Serial.println("move function");
+
+  //Unomment the next 2 lines for relative movement
+  stepperLeft.move(leftPosition);//move left wheel to relative position
+  stepperRight.move(rightPosition);//move right wheel to relative position
+
+  stepperLeft.setSpeed(leftVelocity);//set left motor speed
+  stepperRight.setSpeed(rightVelocity);//set right motor speed
+
+  //block until done
+  steppers.runSpeedToPosition();
+}
+/*
+distance (MM) to motor steps
+*/
+float distanceToSteps(float distance){
+  //distance [mm] divided by circumference [mm] (pi times diameter, 85 mm) to steps (mult by should be 200, is 800 for some reason)
+  return (distance * 800.0 / (PI*85.0));
+}
+
+//this is under the assumption that both motors are being driven, radians to motor steps
+float radiansToSteps(float radians){
+  //radians*trackwidth is the distance in mm that wheel needs to spin
+  return distanceToSteps(radians * TRACKWIDTH / 2);
+
+}
+
+/*
+Returns the value that is closest to 0
+*/
+float closestto0(float a, float b) {
+  float c = a;
+  float d = b;
+  if(c<0) c = -c;
+  if(d<0) d = -d;
+
+  if(c<d) return a;
+  return b;
+}
+
+/*
+The move command moves the robot a requested linear distance and angular distance
+The velocity is restricted to the slowest of the linear velocity or angular velocity
+*/
+void move(float lindist, float angdist, float linvel, float angvel){
+  // if the signs don't agree, make them agree
+  if((lindist<0)!=(linvel<0)) linvel = -linvel;
+  if((angdist<0)!=(angvel<0)) angvel = -angvel;
+
+  // if not trying to move one, set velocity to zero
+  if(lindist==0) linvel=0;
+  if(angdist==0) angvel=0;
+
+  if((lindist!=0 && linvel==0) || (angdist!=0 && angvel==0)){ //If told to move at 0 veloicty, don't run
+    return;
+  }
+
+  //add linear and angular distances and convert to motor steps
+  float steps1 = distanceToSteps(lindist) - radiansToSteps(angdist);
+  float steps2 = distanceToSteps(lindist) + radiansToSteps(angdist);
+  //Slow down the faster move so they (linear and rotational moves) finish at the same time
+  //skip velocity scaling if either distance is 0
+  if(lindist!=0 && angdist!=0){ //If one speed is 0 don't scale to avoid divide by 0
+    linvel = closestto0(linvel, lindist / (angdist / angvel));
+    angvel = closestto0(angvel, angdist / (lindist / linvel));
+  }
+  
+  //add linear and angular speeds and convert to motor steps
+  float speed1 = distanceToSteps(linvel) - radiansToSteps(angvel);
+  float speed2 = distanceToSteps(linvel) + radiansToSteps(angvel);
+
+  moveMotors(steps1, speed1, steps2, speed2);
+}
+
+// move but using the MOVE_VEL and ROT_VEL constants
+void move(float lindist, float angdist) {
+  move(lindist, angdist, MOVE_VEL, ROT_VEL);
+} 
+
+/*
+  Pivots around one wheel.
+  Wheel that spins is determined by the turn amount's sign and if it is to goForward
+
+  Linear distance is set to the half the track width times the arc length
+*/
+void pivot(float turnRadians, bool goForward) {
+  if(goForward==turnRadians>0)
+    move(turnRadians*TRACKWIDTH/2, turnRadians);  
+  else
+    move(-turnRadians*TRACKWIDTH/2, turnRadians);  
+}
+
+/*
+  Pivots around one wheel.
+  Wheel that spins is determined by the turn amount's sign, always prefers going forwards
+*/
+void pivot(float turnRadians) {
+  pivot(turnRadians, true);
+}
+
+/*
+  Spins in place, turnRadians amount.
+  Both mostors spin, opposite directions. No linear distance is traveled
+  Positive is counterclockwise
+  Blocks until motors are done moving.
+*/
+void spin(float turnRadians) {
+  move(0, turnRadians);
+}
+
+/*
+  Drive along a circle.
+  circleRadius positive means go around a circle forward, negative is backwards
+  turnRadians positive means turning left, negative is right
+
+  Linear distance is set to the circle radius times the arc length
+*/
+void turn(float turnRadians, float circleRadius) {
+  float dist = circleRadius*turnRadians;
+  if(dist<0) dist = -dist;
+  move(dist, turnRadians);
+}
+
+/*
+  Moves the robot forward, distanceMM milimeters.
+  Blocks until motors are done moving.
+*/
+void forward(float distanceMM) {
+  move(distanceMM, 0);
+}
+
+/*
+  Moves the robot backward, distanceMM milimeters.
+  Blocks until motors are done moving.
+*/
+void reverse(float distanceMM) {
+  forward(-distanceMM);
+}
+
+/*
+  Stops the movement of the robot.
+*/
+void stop() {
+  moveMotors(0,0,0,0);
+}
+
+
+/*
+  Turns around a full circle.
+  Positive diam is going around left, negative is going around right
+  Turns the red led on.
+
+  All math is handled by the turn() function
+*/
+void moveCircle(float diam) {
+  digitalWrite(redLED, HIGH);//turn on red LED
+  if(diam<0)
+    turn(-2*PI, diam/2);
+  else
+    turn(2*PI, diam/2);
+  digitalWrite(redLED, LOW);//turn off red LED
+}
+
+/*
+  The moveFigure8() function takes the diameter in inches as the input. It uses the moveCircle() function
+  twice, left then right, to create a figure 8 with circles of the given diameter.
+  Turns the red and yellow led on.
+*/
+void moveFigure8(float diam) {
+  digitalWrite(ylwLED, HIGH);//turn on yellow LED
+  moveCircle(diam);
+  moveCircle(-diam);
+  digitalWrite(ylwLED, LOW);//turn off yellow LED
+}
+
+/*
+  Points the robot in the angle given .
+  Turns on and off the green led.
+*/
+void goToAngle(float angleRadians){
+  digitalWrite(grnLED, HIGH);//turn on green LED
+  spin(angleRadians); //handles angle logic
+  digitalWrite(grnLED, LOW);//turn off green LED
+}
+
+
+
+/*
+  Points the position in mm.
+  Pos x is forward, pos y is to the left (Dr. Berry coordinate system)
+  Turns on and off the green and yellow leds.
+*/
+void goToGoal(float x, float y){
+  digitalWrite(ylwLED, HIGH);//turn on yellow LED
+  goToAngle(atan2(y, x)); //turns on green
+  digitalWrite(grnLED, HIGH);//keep on green LED
+  forward(hypot(y, x));
+  digitalWrite(grnLED, LOW);//turn off green LED
+  digitalWrite(ylwLED, LOW);//turn off yellow LED
+}
+
+/*
+  Drives a square, forward then right.
+  Turns on and off the red, green and yellow leds.
+*/
+void square(float len) {
+  digitalWrite(redLED, HIGH);//turn on red LED
+  digitalWrite(ylwLED, HIGH);//turn on yellow LED
+  digitalWrite(grnLED, HIGH);//keep on green LED
+  for(int i=0; i<4; i++){
+    forward(len);
+    delay(100);
+    spin(-PI/2); //turn right
+    delay(100);
+  }
+  digitalWrite(redLED, LOW);//turn off red LED
+  digitalWrite(ylwLED, LOW);//turn off yellow LED
+  digitalWrite(grnLED, LOW);//keep off green LED
+}
+
+//// MAIN
+void setup()
+{
+  int baudrate = 9600; //serial monitor baud rate'
+  init_stepper(); //set up stepper motor
+
+  attachInterrupt(digitalPinToInterrupt(ltEncoder), LwheelSpeed, CHANGE);    //init the interrupt mode for the left encoder
+  attachInterrupt(digitalPinToInterrupt(rtEncoder), RwheelSpeed, CHANGE);   //init the interrupt mode for the right encoder
+
+
+  Serial.begin(baudrate);     //start serial monitor communication
+  Serial.println("Robot starting...Put ON TEST STAND");
+  delay(pauseTime); //always wait 2.5 seconds before the robot moves
+
+  // do the demo function
+  // demonstration3();
+}
+
+// does the lab1 demo, part 1
+// basic movements
+void demonstration1() {
+  forward(400); //forward 200mm
+  delay(wait_time);
+  reverse(200); //backward 200mm
+  delay(wait_time);
+
+  pivot(PI/2); //pivot forward on left wheel, 90degrees
+  delay(wait_time);
+  pivot(-PI/2); //pivot forward on right wheel, 90degrees
+  delay(wait_time);
+
+  turn(PI/2, 200); //turn forward, left, around a 200mm radius circle, 90degrees of the circle
+  delay(wait_time);
+  turn(-PI/2, 200); //turn forward, right, around a 200mm radius circle, 90degrees of the circle
+  delay(wait_time);
+
+  spin(PI/2); //spin in place left, 90degrees
+  delay(wait_time);
+  spin(-PI/2); //spin in place right, 90degrees
+  delay(wait_time);
+  
+}
+
+// does the lab1 demo, part 2
+// circle and figure eight
+void demonstration2() {
+  allOFF();
+  moveCircle(-914); //move right around a 3ft diameter circle
+  
+  delay(wait_time);
+
+  moveFigure8(914); //move left then right two 3ft diameter circles
+}
+
+// does the lab1 demo, part 3
+// gotogoal which includes gotoangle
+void demonstration3() {
+  allOFF();
+
+  // 3 ft square
+  square(914.4);
+  delay(wait_time*3);
+
+  // Go to goal 3', 4' includes go to angle 53 degrees and move forward 5'
+  goToGoal(914.4, 1219.2);
+  delay(wait_time*3);
+  goToGoal(-609.6, -609.6);
+}
+
+void loop()
+{
+ //loop is not being used because it does not stop
+  delay(wait_time/10);               //wait to move robot or read data
+  print_encoder_data();
+}
