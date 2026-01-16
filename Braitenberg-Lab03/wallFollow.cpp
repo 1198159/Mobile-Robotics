@@ -1,23 +1,33 @@
-#include <wallFollow.h>
-#include <cmath>
+#include "wallFollow.h"
 
-float[] calculate(float dt, float linDistance, float angDistance){
-  //calculate angular velo output
+void calculate(
+  float dt,
+  float linDistance,
+  float angDistance,
+  float* linOutput,
+  float* angOutput
+) {
   float errorDist = linDistance - targetDistance;
-  angSpeedIntegral = std::clamp(angSpeedIntegral + errorDist, -maxAngSpeedIntegral, maxAngSpeedIntegral);
 
-  float angOutput = kPa*errorDist + kIa * angSpeedIntegral;
-  if (errorDistLast != NaN) {
-    angOutput += (errorDist - errorDistLast) / dt;
+  angSpeedIntegral = clamp(
+    angSpeedIntegral + errorDist,
+    -maxAngSpeedIntegral,
+    maxAngSpeedIntegral
+  );
+
+  *angOutput = kPa * errorDist + kIa * angSpeedIntegral;
+
+  if (isReady && dt > 0.0f) {
+    *angOutput += kDa * (errorDist - errorDistLast) / dt;
+  } else {
+    isReady = true;
   }
 
   errorDistLast = errorDist;
-  //calculate linvel output
-  if (errorDist > 80) linOutput = 100;
-  else linoutput = 0;
 
-
-
-  return [linOutput, angOutput];
-
+  if (errorDist > 80.0f) {
+    *linOutput = maxLinSpeed;
+  } else {
+    *linOutput = 0.0f;
+  }
 }

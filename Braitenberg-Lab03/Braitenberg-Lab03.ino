@@ -44,7 +44,7 @@
 #include <Arduino.h>//include for PlatformIO Ide
 #include <AccelStepper.h>//include the stepper motor library
 #include <MultiStepper.h>//include multiple stepper motor library
-#include <wallFollow.h>
+#include "wallFollow.h"
 
 #include "RPC.h" //for other core
 
@@ -930,7 +930,7 @@ void follow(float x, float y, struct sensors& data) {
   if(angvel<-ROT_VEL) angvel = -ROT_VEL;
 
   // if it wants to turn a little or it is far away, allow movement
-  if(specialCaseOnlyForward){
+  if(abs(ang)<AVOID_SPECIAL_CASE_ANGLE_THRESH || data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
     moveVelo(linvel, angvel);
   } else {
     // spin in place, ignoring other stuff

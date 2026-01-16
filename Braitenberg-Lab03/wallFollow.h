@@ -1,12 +1,35 @@
-private final float kPa = 1;
-private final float kIa = 0;
-private final float kDa = 0; 
+#ifndef CONTROLLER_H
+#define CONTROLLER_H
 
-private final float maxLinSpeed = 100; //mm/s
-private final float maxAngSpeed = 1; //rad/s
-private final float targetDistance = 127; //mm
+/* ===== Constants / Tunables ===== */
+constexpr float kPa = 1.0f;
+constexpr float kIa = 0.0f;
+constexpr float kDa = 0.0f;
 
-private final float maxAngSpeedIntegral = .1;
+constexpr float maxLinSpeed = 100.0f;     // mm/s
+constexpr float maxAngSpeed = 1.0f;       // rad/s
+constexpr float targetDistance = 127.0f;  // mm
+constexpr float maxAngSpeedIntegral = 0.1f;
 
-private float angSpeedIntegral = 0;
-private float errorDistLast = NaN;
+/* ===== State variables (must NOT be constexpr) ===== */
+inline float angSpeedIntegral = 0.0f;
+inline float errorDistLast = 0.0f;
+inline bool isReady = false;
+
+/* ===== Utility ===== */
+inline float clamp(float val, float minVal, float maxVal) {
+  if (val < minVal) return minVal;
+  if (val > maxVal) return maxVal;
+  return val;
+}
+
+/* ===== API ===== */
+void calculate(
+  float dt,
+  float linDistance,
+  float angDistance,
+  float* linOutput,
+  float* angOutput
+);
+
+#endif
