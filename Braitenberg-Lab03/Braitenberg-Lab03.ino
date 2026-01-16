@@ -525,10 +525,15 @@ void init_stepper(){
 }
 
 //function prints encoder data to serial monitor
-// requires updateOdometry() to have been called
 void printEncoderData() {
   static unsigned long timer = 0;                           //print manager timer
   if (millis() - timer > 100) {                             //print encoder data every 100 ms or so
+    long deltaLeft = encoder[LEFT];  
+    encoder[LEFT] = 0; 
+    long deltaRight = encoder[RIGHT];  
+    encoder[RIGHT] = 0; 
+    accumTicks[LEFT]+=deltaLeft;
+    accumTicks[RIGHT]+=deltaRight;
     Serial.print("Accumulated Ticks: ");
     Serial.print("\tl: ");
     Serial.print(accumTicks[LEFT]);
@@ -583,24 +588,41 @@ float stepsToRadians(float steps) {
 }
 
 
-float currentX=0; //mm
-float currentY=0; //mm
-float currentAngle=0; //radians
+float currentX=0; //mm, forward from where started
+float currentY=0; //mm, positive is left
+float currentAngle=0; //radians, positive is left
+long prevLeft=0;
+long prevRight=0;
 
 void updateOdometry() {
-  long deltaLeft = encoder[LEFT];  
-  encoder[LEFT] = 0; 
-  long deltaRight = encoder[RIGHT];  
-  encoder[RIGHT] = 0; 
-  accumTicks[LEFT]+=deltaLeft;
-  accumTicks[RIGHT]+=deltaRight;
+  long currentLeft = stepperLeft.currentPosition();
+  long currentRight = stepperRight.currentPosition();
+  float deltaLeft = currentLeft-prevLeft;
+  float deltaRight = currentRight-prevRight;
+  prevLeft=currentLeft;
+  prevRight=currentRight;
 
-  float deltaDist = stepsToDistance(deltaLeft+deltaRight)/2;
-  float deltaAngle = stepsToRadians(deltaLeft-deltaRight)/2;
+  float deltaDist = stepsToDistance(deltaLeft+deltaRight);
+  float deltaAngle = stepsToRadians(deltaRight-deltaLeft)/2;
   currentAngle+=deltaAngle;
 
   currentX+=deltaDist*cos(currentAngle);
-  currentY-=deltaDist*sin(currentAngle);
+  currentY+=deltaDist*sin(currentAngle);
+}
+
+void printOdometry() {
+  static unsigned long timer = 0;                           //print manager timer
+  if (millis() - timer > 100) {                             //print encoder data every 100 ms or so
+    
+    Serial.print("motor ticks odo: ");
+    Serial.print("\tx: ");
+    Serial.print(currentX);
+    Serial.print("\ty: ");
+    Serial.print(currentY);
+    Serial.print("\ta: ");
+    Serial.println(currentAngle);
+    timer = millis();                           //record current time since program started
+  }
 }
 
 /*
@@ -938,6 +960,24 @@ void follow(float x, float y, struct sensors& data) {
   }  
 }
 
+void wallFollow(float x, float y, struct sensors& data){
+
+  bool leftReading=data.newSonars[0] < 100;
+  bool rightReading=data.newSonars[1] < 100;
+
+  float linvel=0;
+  float angvel=0;
+  if(leftReading){
+    // only left reading
+    calculate(LOOP_TIME, data.newSonars[0]*10, atan2(((data.newSonars[0]-data.lidars[2]-2)), 12), &linvel, &angvel);
+  } else if(rightReading){
+    // only right
+    calculate(LOOP_TIME, -data.newSonars[1]*10, 0, &linvel, &angvel);
+  }
+  moveVelo(linvel, clamp(angvel, -0.1, 0.1));
+
+}
+
 //M7 (main processor)
 void loopM7() {
   if((millis() - lastLoopTime) >= LOOP_TIME){
@@ -946,24 +986,28 @@ void loopM7() {
     readSensorData(data); //can be problematic if the sensors struct changes. 
     // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
 
-    // printSensorData(data);
+    printSensorData(data);
 
 
     updateOdometry();
-    printEncoderData();
+    // printOdometry();
 
     //  collide:
-    collide(data); //only using lidars for collide for now
+    // collide(data); //only using lidars for collide for now
     // printCollideInfo();
-    if(collideSaysToStop) {
+    if(false) {
       moveVelo(0, 0); //stop
     } else {
+      // moveVelo(30, 0); //slow forward
+      // moveVelo(30, 0.0492126); //slow around circle of track
+
+      wallFollow(0, 0, data);
 
       // just avoid
       // avoid(0, 0, data);
 
       // avoid with random wander
-      avoid(alwaysForwardRandomWanderX(), alwaysForwardRandomWanderY(), data);
+      // avoid(alwaysForwardRandomWanderX(), alwaysForwardRandomWanderY(), data);
 
 
 

@@ -15,17 +15,17 @@ void calculate(
     maxAngSpeedIntegral
   );
 
-  *angOutput = kPa * errorDist + kIa * angSpeedIntegral;
+  *angOutput = kPl * errorDist + kIl * angSpeedIntegral - kPa * angDistance;
 
   if (isReady && dt > 0.0f) {
-    *angOutput += kDa * (errorDist - errorDistLast) / dt;
+    *angOutput += kDl * (errorDist - errorDistLast) / dt;
   } else {
     isReady = true;
   }
 
   errorDistLast = errorDist;
 
-  if (errorDist > 80.0f) {
+  if (linDistance > 80.0f) {
     *linOutput = maxLinSpeed;
   } else {
     *linOutput = 0.0f;

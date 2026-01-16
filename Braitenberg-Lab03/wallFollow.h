@@ -2,13 +2,17 @@
 #define CONTROLLER_H
 
 /* ===== Constants / Tunables ===== */
-constexpr float kPa = 1.0f;
+constexpr float kPl = 0.007f;
+constexpr float kIl = 0.0f;
+constexpr float kDl = 0.001f;
+
+constexpr float kPa = 0.007f;
 constexpr float kIa = 0.0f;
-constexpr float kDa = 0.0f;
+constexpr float kDa = 0.001f;
 
 constexpr float maxLinSpeed = 100.0f;     // mm/s
 constexpr float maxAngSpeed = 1.0f;       // rad/s
-constexpr float targetDistance = 127.0f;  // mm
+constexpr float targetDistance = 160.0f;  // mm
 constexpr float maxAngSpeedIntegral = 0.1f;
 
 /* ===== State variables (must NOT be constexpr) ===== */
