@@ -6,7 +6,7 @@ constexpr float kPl = 0.007f;
 constexpr float kIl = 0.0f;
 constexpr float kDl = 0.001f;
 
-constexpr float kPa = 0.007f;
+constexpr float kPa = 0.1f;
 constexpr float kIa = 0.0f;
 constexpr float kDa = 0.001f;
 

@@ -969,7 +969,7 @@ void wallFollow(float x, float y, struct sensors& data){
   float angvel=0;
   if(leftReading){
     // only left reading
-    calculate(LOOP_TIME, data.newSonars[0]*10, atan2(((data.newSonars[0]-data.lidars[2]-2)), 12), &linvel, &angvel);
+    calculate(LOOP_TIME, data.newSonars[0]*10, 0, &linvel, &angvel);
   } else if(rightReading){
     // only right
     calculate(LOOP_TIME, -data.newSonars[1]*10, 0, &linvel, &angvel);
