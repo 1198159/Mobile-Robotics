@@ -962,19 +962,20 @@ void follow(float x, float y, struct sensors& data) {
 
 void wallFollow(float x, float y, struct sensors& data){
 
-  bool leftReading=data.newSonars[0] < 100;
-  bool rightReading=data.newSonars[1] < 100;
+  bool leftReading=data.lidars[2] < 100;
+  bool rightReading=data.lidars[3] < 100;
 
   float linvel=0;
   float angvel=0;
   if(leftReading){
     // only left reading
-    calculate(LOOP_TIME, data.newSonars[0]*10, 0, &linvel, &angvel);
+    calculate(LOOP_TIME, data.lidars[2]*10, 0, &linvel, &angvel);
   } else if(rightReading){
     // only right
-    calculate(LOOP_TIME, -data.newSonars[1]*10, 0, &linvel, &angvel);
+    calculate(LOOP_TIME, -data.lidars[3]*10, 0, &linvel, &angvel);
   }
-  moveVelo(linvel, clamp(angvel, -0.1, 0.1));
+  // follow backwards (negative both terms)
+  moveVelo(-linvel, -clamp(angvel, -0.1, 0.1));
 
 }
 
