@@ -33,4 +33,6 @@ void calculate(
   } else {
     *linOutput = 0.0f;
   }
+
+  *angOutput = clamp(*angOutput, -maxStraightAngSpeed, maxStraightAngSpeed);
 }

@@ -962,20 +962,24 @@ void follow(float x, float y, struct sensors& data) {
 
 void wallFollow(float x, float y, struct sensors& data){
 
-  bool leftReading=data.lidars[2] < 100;
-  bool rightReading=data.lidars[3] < 100;
+  bool leftReading=data.lidars[2] < 50;
+  bool rightReading=data.lidars[3] < 50;
+  bool backReading=data.lidars[1] < 5; //driving backwards, so if we are about to go forward into something
 
   float linvel=0;
   float angvel=0;
 
 
-  // if(leftReading&&rightReading){
-  //   calculate(LOOP_TIME, data.lidars[3]*10 - data.lidars[2]*10, 0, &linvel, &angvel);
-  //   // red yellow and green
-  //   digitalWrite(redLED, HIGH);
-  //   digitalWrite(ylwLED, HIGH);
-  //   digitalWrite(grnLED, HIGH);
-  // } else 
+  if(leftReading&&rightReading){
+    calculate(LOOP_TIME, data.lidars[3]*10 - data.lidars[2]*10, 0, &linvel, &angvel);
+    // red yellow and green
+    digitalWrite(redLED, HIGH);
+    digitalWrite(ylwLED, HIGH);
+    digitalWrite(grnLED, HIGH);
+
+    // turn around
+    if(backReading) spin(PI);
+  } else 
   if(leftReading){
     // only left reading
     calculate(LOOP_TIME, targetDistance-data.lidars[2]*10, 0, &linvel, &angvel);
@@ -983,6 +987,9 @@ void wallFollow(float x, float y, struct sensors& data){
     digitalWrite(redLED, LOW);
     digitalWrite(ylwLED, HIGH);
     digitalWrite(grnLED, HIGH);
+
+    // turn 90
+    if(backReading) spin(PI/2*0.8);
   } else if(rightReading){
     // only right
     calculate(LOOP_TIME, data.lidars[3]*10-targetDistance, 0, &linvel, &angvel);
@@ -990,16 +997,25 @@ void wallFollow(float x, float y, struct sensors& data){
     digitalWrite(redLED, HIGH);
     digitalWrite(ylwLED, HIGH);
     digitalWrite(grnLED, LOW);
+
+    // turn 90
+    if(backReading) spin(-PI/2*0.8);
   } else {
     // off?
     digitalWrite(redLED, LOW);
     digitalWrite(ylwLED, LOW);
     digitalWrite(grnLED, LOW);
+
+    bool leftReading2=data.newSonars[0] < 20;
+    bool rightReading2=data.newSonars[1] < 20;
+    if(leftReading2) angvel -= maxOutsideCornerAngSpeed;
+    if(rightReading2) angvel += maxOutsideCornerAngSpeed;
+    linvel = aroundOutsideCornerLinSpeed;
   }
 
   
   // follow backwards (negative both terms)
-  moveVelo(-linvel, clamp(angvel, -0.1, 0.1));
+  moveVelo(-linvel, angvel);
 
 }
 
