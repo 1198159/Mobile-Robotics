@@ -2,12 +2,12 @@
 
 void calculate(
   float dt,
-  float linDistance,
+  float errorDist, //linear error
   float angDistance,
   float* linOutput,
   float* angOutput
 ) {
-  float errorDist = linDistance - targetDistance;
+  // float errorDist = linDistance - targetDistance;
 
   angSpeedIntegral = clamp(
     angSpeedIntegral + errorDist,
@@ -25,7 +25,10 @@ void calculate(
 
   errorDistLast = errorDist;
 
-  if (linDistance > 80.0f) {
+  // absolute value
+  if(errorDist<0) errorDist = -errorDist;
+
+  if (errorDist < 80.0f) {
     *linOutput = maxLinSpeed;
   } else {
     *linOutput = 0.0f;

@@ -30,7 +30,7 @@ inline float clamp(float val, float minVal, float maxVal) {
 /* ===== API ===== */
 void calculate(
   float dt,
-  float linDistance,
+  float errorDist,
   float angDistance,
   float* linOutput,
   float* angOutput

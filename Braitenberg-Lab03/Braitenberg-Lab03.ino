@@ -967,15 +967,39 @@ void wallFollow(float x, float y, struct sensors& data){
 
   float linvel=0;
   float angvel=0;
+
+
+  // if(leftReading&&rightReading){
+  //   calculate(LOOP_TIME, data.lidars[3]*10 - data.lidars[2]*10, 0, &linvel, &angvel);
+  //   // red yellow and green
+  //   digitalWrite(redLED, HIGH);
+  //   digitalWrite(ylwLED, HIGH);
+  //   digitalWrite(grnLED, HIGH);
+  // } else 
   if(leftReading){
     // only left reading
-    calculate(LOOP_TIME, data.lidars[2]*10, 0, &linvel, &angvel);
+    calculate(LOOP_TIME, targetDistance-data.lidars[2]*10, 0, &linvel, &angvel);
+    // yellow and green
+    digitalWrite(redLED, LOW);
+    digitalWrite(ylwLED, HIGH);
+    digitalWrite(grnLED, HIGH);
   } else if(rightReading){
     // only right
-    calculate(LOOP_TIME, -data.lidars[3]*10, 0, &linvel, &angvel);
+    calculate(LOOP_TIME, data.lidars[3]*10-targetDistance, 0, &linvel, &angvel);
+    // red and yellow
+    digitalWrite(redLED, HIGH);
+    digitalWrite(ylwLED, HIGH);
+    digitalWrite(grnLED, LOW);
+  } else {
+    // off?
+    digitalWrite(redLED, LOW);
+    digitalWrite(ylwLED, LOW);
+    digitalWrite(grnLED, LOW);
   }
+
+  
   // follow backwards (negative both terms)
-  moveVelo(-linvel, -clamp(angvel, -0.1, 0.1));
+  moveVelo(-linvel, clamp(angvel, -0.1, 0.1));
 
 }
 
