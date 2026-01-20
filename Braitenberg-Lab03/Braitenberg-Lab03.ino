@@ -960,7 +960,7 @@ void follow(float x, float y, struct sensors& data) {
   }  
 }
 
-void wallFollow(float x, float y, struct sensors& data){
+bool wallFollow(struct sensors& data){
 
   bool leftReading=data.lidars[2] < 50;
   bool rightReading=data.lidars[3] < 50;
@@ -1001,22 +1001,26 @@ void wallFollow(float x, float y, struct sensors& data){
     // turn 90
     if(backReading) spin(-PI/2*0.8);
   } else {
-    // off?
-    digitalWrite(redLED, LOW);
-    digitalWrite(ylwLED, LOW);
-    digitalWrite(grnLED, LOW);
 
     bool leftReading2=data.newSonars[0] < 20;
     bool rightReading2=data.newSonars[1] < 20;
     if(leftReading2) angvel -= maxOutsideCornerAngSpeed;
     if(rightReading2) angvel += maxOutsideCornerAngSpeed;
     linvel = aroundOutsideCornerLinSpeed;
+
+    if(!leftReading2 && !rightReading2) return false;
+
+    
+    // off?
+    digitalWrite(redLED, LOW);
+    digitalWrite(ylwLED, LOW);
+    digitalWrite(grnLED, LOW);
   }
 
   
   // follow backwards (negative both terms)
   moveVelo(-linvel, angvel);
-
+  return true;
 }
 
 //M7 (main processor)
@@ -1042,7 +1046,10 @@ void loopM7() {
       // moveVelo(30, 0); //slow forward
       // moveVelo(30, 0.0492126); //slow around circle of track
 
-      wallFollow(0, 0, data);
+      if(!wallFollow(data)) {
+        // random wander if wall follow fails
+        moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
+      }
 
       // just avoid
       // avoid(0, 0, data);
