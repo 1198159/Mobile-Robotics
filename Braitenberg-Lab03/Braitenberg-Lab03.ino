@@ -87,6 +87,9 @@ int pauseTime = 2500;   //time before robot moves in ms
 #define ROT_VEL 1     //velocity of movement, rad/s
 
 
+#define betterGoToGoalLinThresh 30
+#define betterGoToGoalAngThresh 0.05
+
 //define encoder pins
 #define LEFT 0        //left encoder
 #define RIGHT 1       //right encoder
@@ -1023,6 +1026,60 @@ bool wallFollow(struct sensors& data){
   return true;
 }
 
+bool betterGoToGoal(float targetX, float targetY){
+  float deltaX = targetX-currentX;
+  float deltaY = targetY-currentY;
+  float targetAngle = atan2(deltaY, deltaX);
+  float deltaAngle = targetAngle-currentAngle;
+
+  float linvel=0;
+  float angvel=0;
+  float deltaDist = hypot(deltaX, deltaY);
+  if(abs(deltaDist)>betterGoToGoalLinThresh) linvel=MOVE_VEL; //move if we aren't close enough
+
+  if(deltaAngle>betterGoToGoalAngThresh) angvel=ROT_VEL;
+  if(deltaAngle<-betterGoToGoalAngThresh) angvel=-ROT_VEL;
+
+  // don't rotate if you don't plan on moving
+  if(linvel==0) angvel=0;
+
+
+  if(abs(deltaAngle)<AVOID_SPECIAL_CASE_ANGLE_THRESH){
+    moveVelo(linvel, angvel);
+  } else {
+    moveVelo(0, angvel);
+  }  
+
+  return linvel==0&&angvel==0;
+}
+
+bool backwardsBetterGoToGoal(float targetX, float targetY){
+  float deltaX = targetX-currentX;
+  float deltaY = targetY-currentY;
+  float targetAngle = atan2(-deltaY, -deltaX);
+  float deltaAngle = targetAngle-currentAngle;
+
+  float linvel=0;
+  float angvel=0;
+  float deltaDist = hypot(deltaX, deltaY);
+  if(abs(deltaDist)>betterGoToGoalLinThresh) linvel=-MOVE_VEL; //move if we aren't close enough
+
+  if(deltaAngle>betterGoToGoalAngThresh) angvel=ROT_VEL;
+  if(deltaAngle<-betterGoToGoalAngThresh) angvel=-ROT_VEL;
+
+  // don't rotate if you don't plan on moving
+  if(linvel==0) angvel=0;
+
+
+  if(abs(deltaAngle)<AVOID_SPECIAL_CASE_ANGLE_THRESH){
+    moveVelo(linvel, angvel);
+  } else {
+    moveVelo(0, angvel);
+  }  
+
+  return linvel==0&&angvel==0;
+}
+
 //M7 (main processor)
 void loopM7() {
   if((millis() - lastLoopTime) >= LOOP_TIME){
@@ -1038,18 +1095,18 @@ void loopM7() {
     // printOdometry();
 
     //  collide:
-    // collide(data); //only using lidars for collide for now
+    collide(data); //only using lidars for collide for now
     // printCollideInfo();
-    if(false) {
-      moveVelo(0, 0); //stop
+    if(collideWantsToStop) {
+      moveVelo(60, 2*0.0492126); //stop
     } else {
       // moveVelo(30, 0); //slow forward
       // moveVelo(30, 0.0492126); //slow around circle of track
 
-      if(!wallFollow(data)) {
-        // random wander if wall follow fails
-        moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
-      }
+      // if(!wallFollow(data)) {
+      //   // random wander if wall follow fails
+      //   moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
+      // }
 
       // just avoid
       // avoid(0, 0, data);
@@ -1057,6 +1114,8 @@ void loopM7() {
       // avoid with random wander
       // avoid(alwaysForwardRandomWanderX(), alwaysForwardRandomWanderY(), data);
 
+      // betterGoToGoal(0, 0);
+      backwardsBetterGoToGoal(0, 0);
 
 
       // just follow
