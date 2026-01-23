@@ -685,8 +685,8 @@ void move(float lindist, float angdist) {
 
 
 void updateMotors() {
-  stepperLeft.runSpeed();
-  stepperRight.runSpeed();
+  stepperLeft.run();
+  stepperRight.run();
 }
 
 // nonblocking, sets speeds, need to call updateMotors() rapeatedly after
@@ -1005,8 +1005,8 @@ bool wallFollow(struct sensors& data){
     if(backReading) spin(-PI/2*0.8);
   } else {
 
-    bool leftReading2=data.newSonars[0] < 20;
-    bool rightReading2=data.newSonars[1] < 20;
+    bool leftReading2=data.newSonars[0] < 15;
+    bool rightReading2=data.newSonars[1] < 15;
     if(leftReading2) angvel -= maxOutsideCornerAngSpeed;
     if(rightReading2) angvel += maxOutsideCornerAngSpeed;
     linvel = aroundOutsideCornerLinSpeed;
@@ -1021,6 +1021,120 @@ bool wallFollow(struct sensors& data){
   }
 
   
+  // follow backwards (negative both terms)
+  moveVelo(-linvel, angvel);
+  return true;
+}
+
+#define wallFollowAdjustedAngleThres 1
+
+// make the sonar state sticky
+int sonarStateCount = 0;
+int sticky1 = 0;
+int sticky2 = 0;
+
+// will give up early if the wall isn't in the way of the target
+bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
+
+  float deltaX = targetX-currentX;
+  float deltaY = targetY-currentY;
+  float targetAngle = atan2(deltaY, deltaX);
+
+  bool leftReading=data.lidars[2] < 50;
+  bool rightReading=data.lidars[3] < 50;
+  bool backReading=data.lidars[1] < 5; //driving backwards, so if we are about to go forward into something
+
+  float linvel=0;
+  float angvel=0;
+
+
+  if(leftReading&&rightReading && sonarStateCount==0){
+    calculate(LOOP_TIME, data.lidars[3]*10 - data.lidars[2]*10, 0, &linvel, &angvel);
+    // red yellow and green
+    digitalWrite(redLED, HIGH);
+    digitalWrite(ylwLED, HIGH);
+    digitalWrite(grnLED, HIGH);
+    digitalWrite(bluLED, LOW);
+
+    // turn around
+    if(backReading) spin(PI);
+  } else 
+  if(leftReading && sonarStateCount==0){
+    float a = targetAngle-3*PI/2;
+    if(a<PI) a+=PI*2;
+    if(abs(a)<wallFollowAdjustedAngleThres) return false; //give up, let go to angle handle it
+
+    // only left reading
+    calculate(LOOP_TIME, targetDistance-data.lidars[2]*10, 0, &linvel, &angvel);
+    // yellow and green
+    digitalWrite(redLED, LOW);
+    digitalWrite(ylwLED, HIGH);
+    digitalWrite(grnLED, HIGH);
+    digitalWrite(bluLED, LOW);
+
+    // turn 90
+    if(backReading) spin(PI/2*0.8);
+  } else if(rightReading && sonarStateCount==0){
+    float a = targetAngle-currentAngle;// + PI;//-2*PI/2;
+    if(a<-PI) a+=PI*2;
+    if(a>PI) a-=PI*2;
+
+
+    Serial.print("   ");
+    Serial.print(a);
+
+    if(abs(a)<1){
+      digitalWrite(redLED, LOW);
+    digitalWrite(ylwLED, LOW);
+    digitalWrite(grnLED, LOW);
+    digitalWrite(bluLED, LOW);
+      return false; //give up, let go to angle handle it
+    }
+
+    // only right
+    calculate(LOOP_TIME, data.lidars[3]*10-targetDistance, 0, &linvel, &angvel);
+    // red and yellow
+    digitalWrite(redLED, HIGH);
+    digitalWrite(ylwLED, HIGH);
+    digitalWrite(grnLED, LOW);
+    digitalWrite(bluLED, LOW);
+
+    // turn 90
+    if(backReading) spin(-PI/2*0.8);
+  } else {
+
+    // bool leftReading2=data.newSonars[0] < 15;
+    // bool rightReading2=data.newSonars[1] < 15;
+    if(data.newSonars[0] < 15){
+      sticky1 = 5;
+    }
+    if(data.newSonars[1] < 15){
+      sticky2 = 5;
+    }
+    // bool rightReading2=data.newSonars[1] < 15;)
+    // bool rightReading2=data.newSonars[1] < 15;
+    if(sticky1 > 0) angvel -= maxOutsideCornerAngSpeed;
+    if(sticky2 > 0) angvel += maxOutsideCornerAngSpeed;
+    linvel = aroundOutsideCornerLinSpeed;
+
+    if(sticky1 == 0 && sticky2 == 0) {
+      
+      return false;
+    };
+
+    sonarStateCount=10;
+    if(sticky1>0) sticky1--;
+    if(sticky2>0) sticky2--;
+
+    // off?
+    digitalWrite(redLED, LOW);
+    digitalWrite(ylwLED, LOW);
+    digitalWrite(grnLED, LOW);
+    digitalWrite(bluLED, HIGH);
+    
+  }
+
+  if(sonarStateCount>0) sonarStateCount--;
   // follow backwards (negative both terms)
   moveVelo(-linvel, angvel);
   return true;
@@ -1056,7 +1170,8 @@ bool betterGoToGoal(float targetX, float targetY){
 bool backwardsBetterGoToGoal(float targetX, float targetY){
   float deltaX = targetX-currentX;
   float deltaY = targetY-currentY;
-  float targetAngle = atan2(-deltaY, -deltaX);
+  float targetAngle = atan2(deltaY, deltaX)+PI;
+  if(targetAngle>PI) targetAngle-=PI*2;
   float deltaAngle = targetAngle-currentAngle;
 
   float linvel=0;
@@ -1088,25 +1203,31 @@ void loopM7() {
     readSensorData(data); //can be problematic if the sensors struct changes. 
     // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
 
-    printSensorData(data);
+    // printSensorData(data);
 
 
     updateOdometry();
-    // printOdometry();
+    printOdometry();
 
     //  collide:
-    collide(data); //only using lidars for collide for now
+    // collide(data); //only using lidars for collide for now
     // printCollideInfo();
-    if(collideWantsToStop) {
-      moveVelo(60, 2*0.0492126); //stop
+    if(false) {
+      moveVelo(0, 0); //stop
     } else {
       // moveVelo(30, 0); //slow forward
       // moveVelo(30, 0.0492126); //slow around circle of track
 
-      // if(!wallFollow(data)) {
-      //   // random wander if wall follow fails
-      //   moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
-      // }
+      float targetX = -1828.8*3; //6*3 ft
+      float targetY = 0;
+
+      if(!wallFollowAdjusted(data, targetX, targetY)) {
+        // random wander if wall follow fails
+        // moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
+
+        backwardsBetterGoToGoal(targetX, targetY);
+      }
+
 
       // just avoid
       // avoid(0, 0, data);
@@ -1115,7 +1236,7 @@ void loopM7() {
       // avoid(alwaysForwardRandomWanderX(), alwaysForwardRandomWanderY(), data);
 
       // betterGoToGoal(0, 0);
-      backwardsBetterGoToGoal(0, 0);
+      // backwardsBetterGoToGoal(0, 0);
 
 
       // just follow
