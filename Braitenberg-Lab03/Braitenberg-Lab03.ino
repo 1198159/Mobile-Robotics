@@ -78,7 +78,7 @@ MultiStepper steppers;//create instance to control multiple steppers at the same
 #define stepperEnTrue false //variable for enabling stepper motor
 #define stepperEnFalse true //variable for disabling stepper motor
 #define max_speed 1500 //maximum stepper motor speed
-#define max_accel 10000 //maximum motor acceleration
+#define max_accel 1000 //maximum motor acceleration
 
 int pauseTime = 2500;   //time before robot moves in ms
 
@@ -87,8 +87,8 @@ int pauseTime = 2500;   //time before robot moves in ms
 #define ROT_VEL 1     //velocity of movement, rad/s
 
 
-#define betterGoToGoalLinThresh 30
-#define betterGoToGoalAngThresh 0.05
+#define betterGoToGoalLinThresh 100
+#define betterGoToGoalAngThresh 0.5
 
 //define encoder pins
 #define LEFT 0        //left encoder
@@ -1060,12 +1060,21 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
     if(backReading) spin(PI);
   } else 
   if(leftReading && sonarStateCount==0){
-    float a = targetAngle-3*PI/2;
-    if(a<PI) a+=PI*2;
+    float a = currentAngle-targetAngle;// - PI/2;
+    if(a<-PI) a+=PI*2;
+    if(a>PI) a-=PI*2;
     if(abs(a)<wallFollowAdjustedAngleThres) return false; //give up, let go to angle handle it
+    
+    Serial.print("   ");
+    Serial.print(a);
+    Serial.print("left");
 
     // only left reading
     calculate(LOOP_TIME, targetDistance-data.lidars[2]*10, 0, &linvel, &angvel);
+
+    Serial.print("   ");
+    Serial.print(angvel);
+    Serial.print(" angvel ");
     // yellow and green
     digitalWrite(redLED, LOW);
     digitalWrite(ylwLED, HIGH);
@@ -1075,15 +1084,16 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
     // turn 90
     if(backReading) spin(PI/2*0.8);
   } else if(rightReading && sonarStateCount==0){
-    float a = targetAngle-currentAngle;// + PI;//-2*PI/2;
+    float a = targetAngle-currentAngle;//-2*PI/2;
     if(a<-PI) a+=PI*2;
     if(a>PI) a-=PI*2;
 
 
     Serial.print("   ");
     Serial.print(a);
+    Serial.print("right");
 
-    if(abs(a)<1){
+    if(abs(a)<wallFollowAdjustedAngleThres){
       digitalWrite(redLED, LOW);
     digitalWrite(ylwLED, LOW);
     digitalWrite(grnLED, LOW);
@@ -1093,6 +1103,10 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
 
     // only right
     calculate(LOOP_TIME, data.lidars[3]*10-targetDistance, 0, &linvel, &angvel);
+  
+    Serial.print("   ");
+    Serial.print(angvel);
+    Serial.print(" angvel ");
     // red and yellow
     digitalWrite(redLED, HIGH);
     digitalWrite(ylwLED, HIGH);
@@ -1105,10 +1119,10 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
 
     // bool leftReading2=data.newSonars[0] < 15;
     // bool rightReading2=data.newSonars[1] < 15;
-    if(data.newSonars[0] < 15){
+    if(data.newSonars[0] < 20){
       sticky1 = 5;
     }
-    if(data.newSonars[1] < 15){
+    if(data.newSonars[1] < 20){
       sticky2 = 5;
     }
     // bool rightReading2=data.newSonars[1] < 15;)
@@ -1117,12 +1131,16 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
     if(sticky2 > 0) angvel += maxOutsideCornerAngSpeed;
     linvel = aroundOutsideCornerLinSpeed;
 
+    
+    // first wall seen is back wall
+    if(backReading) spin(PI/2*0.8);
+
     if(sticky1 == 0 && sticky2 == 0) {
-      
+
       return false;
     };
 
-    sonarStateCount=10;
+    sonarStateCount=0;
     if(sticky1>0) sticky1--;
     if(sticky2>0) sticky2--;
 
@@ -1130,12 +1148,14 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
     digitalWrite(redLED, LOW);
     digitalWrite(ylwLED, LOW);
     digitalWrite(grnLED, LOW);
-    digitalWrite(bluLED, HIGH);
-    
+    digitalWrite(bluLED, HIGH);    
   }
 
   if(sonarStateCount>0) sonarStateCount--;
   // follow backwards (negative both terms)
+      Serial.print("   ");
+    Serial.print(angvel);
+    Serial.print(" angvel2 ");
   moveVelo(-linvel, angvel);
   return true;
 }
@@ -1202,11 +1222,11 @@ void loopM7() {
     struct sensors data;
     readSensorData(data); //can be problematic if the sensors struct changes. 
     // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
-
-    // printSensorData(data);
-
-
     updateOdometry();
+
+
+
+    printSensorData(data);
     printOdometry();
 
     //  collide:
@@ -1218,12 +1238,17 @@ void loopM7() {
       // moveVelo(30, 0); //slow forward
       // moveVelo(30, 0.0492126); //slow around circle of track
 
-      float targetX = -1828.8*3; //6*3 ft
+      float targetX = -3000;//-1828.8; //6 ft
       float targetY = 0;
 
       if(!wallFollowAdjusted(data, targetX, targetY)) {
         // random wander if wall follow fails
         // moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
+
+        digitalWrite(redLED, LOW);
+        digitalWrite(ylwLED, LOW);
+        digitalWrite(grnLED, LOW);
+        digitalWrite(bluLED, LOW); 
 
         backwardsBetterGoToGoal(targetX, targetY);
       }
