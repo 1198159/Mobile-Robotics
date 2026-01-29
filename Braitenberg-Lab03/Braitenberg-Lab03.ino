@@ -83,7 +83,7 @@ MultiStepper steppers;//create instance to control multiple steppers at the same
 int pauseTime = 2500;   //time before robot moves in ms
 
 #define TRACKWIDTH 216   //distance between the wheels in mm
-#define MOVE_VEL 200     //velocity of movement, mm/s
+#define MOVE_VEL 50     //velocity of movement, mm/s
 #define ROT_VEL 2   //velocity of movement, rad/s
 
 
@@ -605,7 +605,7 @@ void updateOdometry() {
   prevLeft=currentLeft;
   prevRight=currentRight;
 
-  float deltaDist = stepsToDistance(deltaLeft+deltaRight);
+  float deltaDist = stepsToDistance(deltaLeft+deltaRight)/2;
   float deltaAngle = stepsToRadians(deltaRight-deltaLeft)/2;
   currentAngle+=deltaAngle;
 
@@ -1048,16 +1048,20 @@ int sticky2 = 0;
 // will give up early if the wall isn't in the way of the target
 bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
 
+  // printSensorData(data);
   float deltaX = targetX-currentX;
   float deltaY = targetY-currentY;
   float targetAngle = atan2(deltaY, deltaX);
+  float targetMagnitude = hypot(deltaX, deltaY);
 
   bool leftReading=data.lidars[2] < 30;
   bool rightReading=data.lidars[3] < 30;
-  bool backReading=data.lidars[1] < 5 && data.lidars[1] > 2; //driving backwards, so if we are about to go forward into something
+  bool backReading=data.lidars[1] < 8 && data.lidars[1] > 2; //driving backwards, so if we are about to go forward into something
+
 
   float linvel=0;
   float angvel=0;
+
 
   if(spinCount > 0){
     spinCount--;
@@ -1065,20 +1069,21 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
   } else if(spinCount < 0){
     spinCount++;
     angvel = -ROT_VEL;
-  }else if(leftReading&&rightReading){
-    if(backReading) spinCount = 2*SPIN_AMT; 
-    else {
-      float a = targetAngle-currentAngle + PI;//-2*PI/2;
-      if(a<-PI) a+=PI*2;
-      if(a>PI) a-=PI*2;
-      Serial.print("center: ");
-      Serial.println(a);
-      if(abs(a)<0.4){
+  //handle if we abt to hit something
+  } else if(backReading){
 
-        return false; //give up, let go to angle handle it
-      }
-      calculate(LOOP_TIME, data.lidars[3]*10 - data.lidars[2]*10, 0, &linvel, &angvel);
+    if(leftReading && rightReading) spinCount = 2 * SPIN_AMT;
+    else if (rightReading) spinCount = -SPIN_AMT;
+    else spinCount = SPIN_AMT;
+
+  }else if(leftReading&&rightReading){
+   
+    if(targetMagnitude < 100){
+
+      return false; //give up, let go to angle handle it
     }
+    calculate(LOOP_TIME, data.lidars[3]*10 - data.lidars[2]*10, 0, &linvel, &angvel);
+  
         // red yellow and green
     digitalWrite(redLED, HIGH);
     digitalWrite(ylwLED, HIGH);
@@ -1089,18 +1094,19 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
   } else 
   if(leftReading){
 
-    if(backReading) spinCount = SPIN_AMT;
-    else {
-      float a = targetAngle-currentAngle + PI;
-      if(a<-PI) a+=PI*2;
-      if(a>PI) a-=PI*2;
-      Serial.print("left: ");
-      Serial.println(a);
-      if(a < PI/2 && a > -PI/2) return false; //give up, let go to angle handle it
+ 
+    float a = targetAngle-currentAngle + PI;
+    if(a<-PI) a+=PI*2;
+    if(a>PI) a-=PI*2;
 
-      // only left reading
-      calculate(LOOP_TIME, targetDistance-data.lidars[2]*10, 0, &linvel, &angvel);
-    }
+    Serial.print("left: ");
+    Serial.println(a);
+    
+    if(a > 0 || targetMagnitude < 100) return false; //give up, let go to angle handle it
+
+    // only left reading
+    calculate(LOOP_TIME, targetDistance-data.lidars[2]*10, 0, &linvel, &angvel);
+  
     // yellow and green
     digitalWrite(redLED, LOW);
     digitalWrite(ylwLED, HIGH);
@@ -1112,26 +1118,19 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
   } else if(rightReading){
 
 
+    float a = targetAngle-currentAngle + PI;
+    if(a<-PI) a+=PI*2;
+    if(a>PI) a-=PI*2;
+    Serial.print("right: ");
+    Serial.println(a);
+    if(a < 0 || targetMagnitude < 100){
 
-    // Serial.print("   ");
-    // Serial.print(a);
-    // Serial.print("right");
-
-    if(backReading) spinCount = -SPIN_AMT;
-    else {
-      float a = targetAngle-currentAngle + PI;
-      if(a<-PI) a+=PI*2;
-      if(a>PI) a-=PI*2;
-      Serial.print("right: ");
-      Serial.println(a);
-      if(a < PI/2 && a > -PI/2){
-
-        return false; //give up, let go to angle handle it
-      }
-
-      // only right
-      calculate(LOOP_TIME, data.lidars[3]*10-targetDistance, 0, &linvel, &angvel);
+      return false; //give up, let go to angle handle it
     }
+
+    // only right
+    calculate(LOOP_TIME, data.lidars[3]*10-targetDistance, 0, &linvel, &angvel);
+  
 
     // red and yellow
     digitalWrite(redLED, HIGH);
