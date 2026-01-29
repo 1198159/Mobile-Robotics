@@ -77,18 +77,18 @@ MultiStepper steppers;//create instance to control multiple steppers at the same
 
 #define stepperEnTrue false //variable for enabling stepper motor
 #define stepperEnFalse true //variable for disabling stepper motor
-#define max_speed 1500 //maximum stepper motor speed
+#define max_speed 4000 //maximum stepper motor speed
 #define max_accel 1000 //maximum motor acceleration
 
 int pauseTime = 2500;   //time before robot moves in ms
 
 #define TRACKWIDTH 216   //distance between the wheels in mm
-#define MOVE_VEL 100     //velocity of movement, mm/s
-#define ROT_VEL 1     //velocity of movement, rad/s
+#define MOVE_VEL 200     //velocity of movement, mm/s
+#define ROT_VEL 2   //velocity of movement, rad/s
 
 
 #define betterGoToGoalLinThresh 100
-#define betterGoToGoalAngThresh 0.5
+#define betterGoToGoalAngThresh 0.1
 
 //define encoder pins
 #define LEFT 0        //left encoder
@@ -518,9 +518,9 @@ void init_stepper(){
     digitalWrite(l, LOW);
 
   stepperRight.setMaxSpeed(max_speed);//set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
-  stepperRight.setAcceleration(max_accel);//set desired acceleration in steps/s^2
+  // stepperRight.setAcceleration(max_accel);//set desired acceleration in steps/s^2
   stepperLeft.setMaxSpeed(max_speed);//set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
-  stepperLeft.setAcceleration(max_accel);//set desired acceleration in steps/s^2
+  // stepperLeft.setAcceleration(max_accel);//set desired acceleration in steps/s^2
   steppers.addStepper(stepperRight);//add right motor to MultiStepper
   steppers.addStepper(stepperLeft);//add left motor to MultiStepper
   digitalWrite(stepperEnable, stepperEnTrue);//turns on the stepper motor driver
@@ -691,6 +691,8 @@ void updateMotors() {
 
 // nonblocking, sets speeds, need to call updateMotors() rapeatedly after
 // doesn't limit the speeds, so be careful of moving too fast
+float pastSpeed1 = 0, pastSpeed2 = 0;
+#define MAX_SPEED_DELTA  3.0f
 void moveVelo(float linvel, float angvel){
 
   // digitalWrite(stepperEnable, linvel==0 && angvel==0);//turns off the stepper motor driver to stop the terrible whining noise when not trying to move
@@ -706,9 +708,11 @@ void moveVelo(float linvel, float angvel){
   // }
   
   //add linear and angular speeds and convert to motor steps
-  float speed1 = distanceToSteps(linvel) - radiansToSteps(angvel);
-  float speed2 = distanceToSteps(linvel) + radiansToSteps(angvel);
+  float speed1 = clamp(distanceToSteps(linvel) - radiansToSteps(angvel), pastSpeed1 - MAX_SPEED_DELTA, pastSpeed1 + MAX_SPEED_DELTA);
+  float speed2 = clamp(distanceToSteps(linvel) + radiansToSteps(angvel), pastSpeed2 - MAX_SPEED_DELTA, pastSpeed2 + MAX_SPEED_DELTA);
 
+  pastSpeed1 = speed1;
+  pastSpeed2 = speed2;
   // moveMotors(steps1, speed1, steps2, speed2);
   stepperLeft.setSpeed(speed1);//set left motor speed
   stepperRight.setSpeed(speed2);//set right motor speed
@@ -963,6 +967,9 @@ void follow(float x, float y, struct sensors& data) {
   }  
 }
 
+float spinCount = 0;
+#define SPIN_AMT 70
+
 bool wallFollow(struct sensors& data){
 
   bool leftReading=data.lidars[2] < 50;
@@ -972,8 +979,13 @@ bool wallFollow(struct sensors& data){
   float linvel=0;
   float angvel=0;
 
-
-  if(leftReading&&rightReading){
+  if(spinCount > 0){
+    spinCount--;
+    angvel = ROT_VEL;
+  } else if(spinCount < 0){
+    spinCount++;
+    angvel = -ROT_VEL;
+  } else if(leftReading&&rightReading){
     calculate(LOOP_TIME, data.lidars[3]*10 - data.lidars[2]*10, 0, &linvel, &angvel);
     // red yellow and green
     digitalWrite(redLED, HIGH);
@@ -981,9 +993,8 @@ bool wallFollow(struct sensors& data){
     digitalWrite(grnLED, HIGH);
 
     // turn around
-    if(backReading) spin(PI);
-  } else 
-  if(leftReading){
+    if(backReading) spinCount = 30; 
+  } else if(leftReading){
     // only left reading
     calculate(LOOP_TIME, targetDistance-data.lidars[2]*10, 0, &linvel, &angvel);
     // yellow and green
@@ -992,7 +1003,7 @@ bool wallFollow(struct sensors& data){
     digitalWrite(grnLED, HIGH);
 
     // turn 90
-    if(backReading) spin(PI/2*0.8);
+    if(backReading) spinCount = 15; 
   } else if(rightReading){
     // only right
     calculate(LOOP_TIME, data.lidars[3]*10-targetDistance, 0, &linvel, &angvel);
@@ -1002,22 +1013,23 @@ bool wallFollow(struct sensors& data){
     digitalWrite(grnLED, LOW);
 
     // turn 90
-    if(backReading) spin(-PI/2*0.8);
+    if(backReading) spinCount = -15; 
   } else {
 
-    bool leftReading2=data.newSonars[0] < 15;
-    bool rightReading2=data.newSonars[1] < 15;
-    if(leftReading2) angvel -= maxOutsideCornerAngSpeed;
-    if(rightReading2) angvel += maxOutsideCornerAngSpeed;
-    linvel = aroundOutsideCornerLinSpeed;
+    // bool leftReading2=data.newSonars[0] < 15;
+    // bool rightReading2=data.newSonars[1] < 15;
+    // if(leftReading2) angvel -= maxOutsideCornerAngSpeed;
+    // if(rightReading2) angvel += maxOutsideCornerAngSpeed;
+    // linvel = aroundOutsideCornerLinSpeed;
 
-    if(!leftReading2 && !rightReading2) return false;
+    // if(!leftReading2 && !rightReading2) return false;
 
-    
-    // off?
-    digitalWrite(redLED, LOW);
-    digitalWrite(ylwLED, LOW);
-    digitalWrite(grnLED, LOW);
+    return false;
+    // // off?
+    // digitalWrite(redLED, LOW);
+    // digitalWrite(ylwLED, LOW);
+    // digitalWrite(grnLED, LOW);
+    // digitalWrite(bluLED, LOW);
   }
 
   
@@ -1040,41 +1052,55 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
   float deltaY = targetY-currentY;
   float targetAngle = atan2(deltaY, deltaX);
 
-  bool leftReading=data.lidars[2] < 50;
-  bool rightReading=data.lidars[3] < 50;
-  bool backReading=data.lidars[1] < 5; //driving backwards, so if we are about to go forward into something
+  bool leftReading=data.lidars[2] < 30;
+  bool rightReading=data.lidars[3] < 30;
+  bool backReading=data.lidars[1] < 5 && data.lidars[1] > 2; //driving backwards, so if we are about to go forward into something
 
   float linvel=0;
   float angvel=0;
 
+  if(spinCount > 0){
+    spinCount--;
+    angvel = ROT_VEL;
+  } else if(spinCount < 0){
+    spinCount++;
+    angvel = -ROT_VEL;
+  }else if(leftReading&&rightReading){
+    if(backReading) spinCount = 2*SPIN_AMT; 
+    else {
+      float a = targetAngle-currentAngle + PI;//-2*PI/2;
+      if(a<-PI) a+=PI*2;
+      if(a>PI) a-=PI*2;
+      Serial.print("center: ");
+      Serial.println(a);
+      if(abs(a)<0.4){
 
-  if(leftReading&&rightReading && sonarStateCount==0){
-    calculate(LOOP_TIME, data.lidars[3]*10 - data.lidars[2]*10, 0, &linvel, &angvel);
-    // red yellow and green
+        return false; //give up, let go to angle handle it
+      }
+      calculate(LOOP_TIME, data.lidars[3]*10 - data.lidars[2]*10, 0, &linvel, &angvel);
+    }
+        // red yellow and green
     digitalWrite(redLED, HIGH);
     digitalWrite(ylwLED, HIGH);
     digitalWrite(grnLED, HIGH);
     digitalWrite(bluLED, LOW);
 
     // turn around
-    if(backReading) spin(PI);
   } else 
-  if(leftReading && sonarStateCount==0){
-    float a = currentAngle-targetAngle;// - PI/2;
-    if(a<-PI) a+=PI*2;
-    if(a>PI) a-=PI*2;
-    if(abs(a)<wallFollowAdjustedAngleThres) return false; //give up, let go to angle handle it
-    
-    Serial.print("   ");
-    Serial.print(a);
-    Serial.print("left");
+  if(leftReading){
 
-    // only left reading
-    calculate(LOOP_TIME, targetDistance-data.lidars[2]*10, 0, &linvel, &angvel);
+    if(backReading) spinCount = SPIN_AMT;
+    else {
+      float a = targetAngle-currentAngle + PI;
+      if(a<-PI) a+=PI*2;
+      if(a>PI) a-=PI*2;
+      Serial.print("left: ");
+      Serial.println(a);
+      if(a < PI/2 && a > -PI/2) return false; //give up, let go to angle handle it
 
-    Serial.print("   ");
-    Serial.print(angvel);
-    Serial.print(" angvel ");
+      // only left reading
+      calculate(LOOP_TIME, targetDistance-data.lidars[2]*10, 0, &linvel, &angvel);
+    }
     // yellow and green
     digitalWrite(redLED, LOW);
     digitalWrite(ylwLED, HIGH);
@@ -1082,31 +1108,31 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
     digitalWrite(bluLED, LOW);
 
     // turn 90
-    if(backReading) spin(PI/2*0.8);
-  } else if(rightReading && sonarStateCount==0){
-    float a = targetAngle-currentAngle;//-2*PI/2;
-    if(a<-PI) a+=PI*2;
-    if(a>PI) a-=PI*2;
+
+  } else if(rightReading){
 
 
-    Serial.print("   ");
-    Serial.print(a);
-    Serial.print("right");
 
-    if(abs(a)<wallFollowAdjustedAngleThres){
-      digitalWrite(redLED, LOW);
-    digitalWrite(ylwLED, LOW);
-    digitalWrite(grnLED, LOW);
-    digitalWrite(bluLED, LOW);
-      return false; //give up, let go to angle handle it
+    // Serial.print("   ");
+    // Serial.print(a);
+    // Serial.print("right");
+
+    if(backReading) spinCount = -SPIN_AMT;
+    else {
+      float a = targetAngle-currentAngle + PI;
+      if(a<-PI) a+=PI*2;
+      if(a>PI) a-=PI*2;
+      Serial.print("right: ");
+      Serial.println(a);
+      if(a < PI/2 && a > -PI/2){
+
+        return false; //give up, let go to angle handle it
+      }
+
+      // only right
+      calculate(LOOP_TIME, data.lidars[3]*10-targetDistance, 0, &linvel, &angvel);
     }
 
-    // only right
-    calculate(LOOP_TIME, data.lidars[3]*10-targetDistance, 0, &linvel, &angvel);
-  
-    Serial.print("   ");
-    Serial.print(angvel);
-    Serial.print(" angvel ");
     // red and yellow
     digitalWrite(redLED, HIGH);
     digitalWrite(ylwLED, HIGH);
@@ -1114,48 +1140,47 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
     digitalWrite(bluLED, LOW);
 
     // turn 90
-    if(backReading) spin(-PI/2*0.8);
   } else {
-
-    // bool leftReading2=data.newSonars[0] < 15;
-    // bool rightReading2=data.newSonars[1] < 15;
-    if(data.newSonars[0] < 20){
-      sticky1 = 5;
-    }
-    if(data.newSonars[1] < 20){
-      sticky2 = 5;
-    }
-    // bool rightReading2=data.newSonars[1] < 15;)
-    // bool rightReading2=data.newSonars[1] < 15;
-    if(sticky1 > 0) angvel -= maxOutsideCornerAngSpeed;
-    if(sticky2 > 0) angvel += maxOutsideCornerAngSpeed;
-    linvel = aroundOutsideCornerLinSpeed;
+    return false;
+    // // bool leftReading2=data.newSonars[0] < 15;
+    // // bool rightReading2=data.newSonars[1] < 15;
+    // if(data.newSonars[0] < 20){
+    //   sticky1 = 5;
+    // }
+    // if(data.newSonars[1] < 20){
+    //   sticky2 = 5;
+    // }
+    // // bool rightReading2=data.newSonars[1] < 15;)
+    // // bool rightReading2=data.newSonars[1] < 15;
+    // if(sticky1 > 0) angvel -= maxOutsideCornerAngSpeed;
+    // if(sticky2 > 0) angvel += maxOutsideCornerAngSpeed;
+    // linvel = aroundOutsideCornerLinSpeed;
 
     
-    // first wall seen is back wall
-    if(backReading) spin(PI/2*0.8);
+    // // first wall seen is back wall
+    // if(backReading) spin(PI/2*0.8);
 
-    if(sticky1 == 0 && sticky2 == 0) {
+    // if(sticky1 == 0 && sticky2 == 0) {
 
-      return false;
-    };
+    //   return false;
+    // };
 
-    sonarStateCount=0;
-    if(sticky1>0) sticky1--;
-    if(sticky2>0) sticky2--;
+    // sonarStateCount=0;
+    // if(sticky1>0) sticky1--;
+    // if(sticky2>0) sticky2--;
 
     // off?
-    digitalWrite(redLED, LOW);
-    digitalWrite(ylwLED, LOW);
-    digitalWrite(grnLED, LOW);
-    digitalWrite(bluLED, HIGH);    
+    // digitalWrite(redLED, LOW);
+    // digitalWrite(ylwLED, LOW);
+    // digitalWrite(grnLED, LOW);
+    // digitalWrite(bluLED, HIGH);    
   }
 
   if(sonarStateCount>0) sonarStateCount--;
   // follow backwards (negative both terms)
-      Serial.print("   ");
-    Serial.print(angvel);
-    Serial.print(" angvel2 ");
+    //   Serial.print("   ");
+    // Serial.print(angvel);
+    // Serial.print(" angvel2 ");
   moveVelo(-linvel, angvel);
   return true;
 }
@@ -1205,13 +1230,13 @@ bool backwardsBetterGoToGoal(float targetX, float targetY){
   // don't rotate if you don't plan on moving
   if(linvel==0) angvel=0;
 
-
+  // Serial.print(deltaAngle);
   if(abs(deltaAngle)<AVOID_SPECIAL_CASE_ANGLE_THRESH){
     moveVelo(linvel, angvel);
   } else {
     moveVelo(0, angvel);
   }  
-
+  // Serial.print(linvel);
   return linvel==0&&angvel==0;
 }
 
@@ -1226,19 +1251,22 @@ void loopM7() {
 
 
 
-    printSensorData(data);
-    printOdometry();
-
+    // printSensorData(data);
+    // printOdometry();
+    // Serial.println();
     //  collide:
     // collide(data); //only using lidars for collide for now
     // printCollideInfo();
+    // if(true){
+      // backwardsBetterGoToGoal(1000, 1000);
+    // }
     if(false) {
       moveVelo(0, 0); //stop
     } else {
       // moveVelo(30, 0); //slow forward
       // moveVelo(30, 0.0492126); //slow around circle of track
 
-      float targetX = -3000;//-1828.8; //6 ft
+      float targetX = -1828.8; //6 ft
       float targetY = 0;
 
       if(!wallFollowAdjusted(data, targetX, targetY)) {

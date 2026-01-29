@@ -10,11 +10,11 @@ constexpr float kPa = 0.1f;
 constexpr float kIa = 0.0f;
 constexpr float kDa = 0.001f;
 
-constexpr float maxLinSpeed = 200.0f;//100.0f;     // mm/s
-constexpr float aroundOutsideCornerLinSpeed = 100.0f;//50.0f;     // mm/s. Using sonar to go around an outside corner
-constexpr float maxStraightAngSpeed = 0.5f;//0.1f;       // rad/s. Using lidar to go approx straight along a wall
-constexpr float maxOutsideCornerAngSpeed = 0.8f;       // rad/s. Using sonar to go around an outside corner
-constexpr float targetDistance = 160.0f;  // mm
+constexpr float maxLinSpeed = 200.0f;     // mm/s
+constexpr float aroundOutsideCornerLinSpeed = 50.0f;     // mm/s. Using sonar to go around an outside corner
+constexpr float maxStraightAngSpeed = 0.3f;       // rad/s. Using lidar to go approx straight along a wall
+constexpr float maxOutsideCornerAngSpeed = 2.0f;       // rad/s. Using sonar to go around an outside corner
+constexpr float targetDistance = 100.0f;  // mm
 constexpr float maxAngSpeedIntegral = 0.1f;
 
 /* ===== State variables (must NOT be constexpr) ===== */
