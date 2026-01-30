@@ -1,9 +1,14 @@
 /*
-  Braitenberg-Lab02.ino
+  Braitenberg-Lab03.ino
   Ethan Harden
   Alex Stedman
   Alex Yim
-  1/11/26
+  1/13/26
+
+  This lab is about following walls and hallways, and driving to a goal avoiding obstacles.
+
+  Key functions:
+  TODO: write key functions with short descriptions
 
   Interrupts
   https://www.arduino.cc/reference/en/language/functions/external-interrupts/attachinterrupt/
@@ -182,6 +187,7 @@ MPU6050 accelgyro;
 int16_t ax, ay, az;
 int16_t gx, gy, gz;
 
+// struct for all sensor readings
 struct sensors {
   float lidars[numLidars];
   float sonars[numSonars];
@@ -220,16 +226,19 @@ float newSonarTimeToDist(float t){
   return t/58;
 }
 
+// initializes the lidar for the index given
 void initLidar(int lidarIndex) {
   timesNoRead.lidars[lidarIndex] = TIMES_NO_READ_THRES;
   sense.lidars[lidarIndex] = NO_READ_DIST;
 }
 
+// initializes the (old) sonar for the index given
 void initSonar(int sonarIndex) {
   timesNoRead.sonars[sonarIndex] = TIMES_NO_READ_THRES;
   sense.sonars[sonarIndex] = NO_READ_DIST;
 }
 
+// initializes the new sonar for the index given
 void initNewSonar(int sonarIndex) {
   timesNoRead.newSonars[sonarIndex] = TIMES_NO_READ_THRES;
   sense.newSonars[sonarIndex] = NO_READ_DIST;
@@ -261,7 +270,7 @@ void setupM4() {
     initNewSonar(i);
 }
 
-// lidar is easier
+// Reads the lidar given the lidar index.
 void readLidar(int lidarIndex){
   int state = digitalRead(lidars[lidarIndex]);
   bool noRead = false;
@@ -295,6 +304,7 @@ void readLidar(int lidarIndex){
   lidarStates[lidarIndex] = state;
 }
 
+// Reads the (old) sonar given the sonar index.
 // sonar is harder because the pin is used for triggering and reading
 // sonarStates:  0: do trigger start, 1: waiting sonarTriggerDelay micros, 2: waiting for read to start, 3: reading, 4: waiting sonarAfterReadDelay micros
 // returns true if the next (the other because there is only 2) sonar should be read
@@ -358,6 +368,7 @@ bool readSonar(int sonarIndex){
   return false;
 }
 
+// Reads the new sonar given the sonar index.
 bool readNewSonar(int sonarIndex){
   int read = digitalRead(newSonarEchos[sonarIndex]);
 
@@ -452,10 +463,12 @@ void loopM4() {
   // }
 }
 
+// function for the m7 to call to get data from the m4
 void readSensorData(struct sensors& data) {
   data = RPC.call("read_sensors").as<struct sensors>();
 }
 
+// function to print lidar, (old) sonar, and new sonar
 void printSensorData(struct sensors& data) {
   // print lidar data
   Serial.print("lid:   f ");
@@ -490,9 +503,7 @@ void LwheelSpeed() { encoder[LEFT] ++;  //count the left wheel encoder interrupt
 void RwheelSpeed() { encoder[RIGHT] ++; //count the right wheel encoder interrupts
 }
 
-//interrupt function for lidar
-
-// turns off all 4 leds: red, yellow, gree, blue
+// turns off all 4 leds: red, yellow, green, blue
 void allOFF(){
   for (int l : leds)
     digitalWrite(l,LOW);
@@ -580,12 +591,14 @@ float stepsToDistance(float steps){
   return steps * (PI*85.0) / 800.0;
 }
 
+// radians to travel to motor steps
 //this is under the assumption that both motors are being driven, radians to motor steps
 float radiansToSteps(float radians){
   //radians*trackwidth is the distance in mm that wheel needs to spin
   return distanceToSteps(radians * TRACKWIDTH / 2);
 }
 
+// motor steps to radians travelled
 float stepsToRadians(float steps) {
   return stepsToDistance(steps / TRACKWIDTH * 2);
 }
@@ -597,6 +610,7 @@ float currentAngle=0; //radians, positive is left
 long prevLeft=0;
 long prevRight=0;
 
+// uses motor ticks to update where the robot thinks it is
 void updateOdometry() {
   long currentLeft = stepperLeft.currentPosition();
   long currentRight = stepperRight.currentPosition();
@@ -613,9 +627,10 @@ void updateOdometry() {
   currentY+=deltaDist*sin(currentAngle);
 }
 
+// function to print where the robot thinks it is
 void printOdometry() {
-  static unsigned long timer = 0;                           //print manager timer
-  if (millis() - timer > 100) {                             //print encoder data every 100 ms or so
+  static unsigned long timer = 0;
+  if (millis() - timer > 100) {
     
     Serial.print("motor ticks odo: ");
     Serial.print("\tx: ");
@@ -624,7 +639,7 @@ void printOdometry() {
     Serial.print(currentY);
     Serial.print("\ta: ");
     Serial.println(currentAngle);
-    timer = millis();                           //record current time since program started
+    timer = millis();
   }
 }
 
@@ -683,7 +698,7 @@ void move(float lindist, float angdist) {
   move(lindist, angdist, MOVE_VEL, ROT_VEL);
 } 
 
-
+// tells both motors to run()
 void updateMotors() {
   stepperLeft.run();
   stepperRight.run();
@@ -745,38 +760,47 @@ void stop() {
   moveMotors(0,0,0,0);
 }
 
+// gets a random float, used in random wander
 float randFloat(float low, float high){
   return random(low*RAND_FLOAT_STEP_WIDTH, high*RAND_FLOAT_STEP_WIDTH) * 1.0f / RAND_FLOAT_STEP_WIDTH;
 }
 
+// sets the random wander leds (green on)
 void setRandomWanderLedsOn() {
   digitalWrite(grnLED, HIGH);
 }
 
+// sets the collide leds (red on, yellow and green off)
 void setCollideLedsOn() {
   digitalWrite(redLED, HIGH);
   digitalWrite(ylwLED, LOW);
   digitalWrite(grnLED, LOW);
 }
+// un-sets the collide leds (red off)
 void setCollideLedsOff() {
   digitalWrite(redLED, LOW);
 }
 
+// sets the avoid leds (yellow on)
 void setAvoidLedsOn() {
   digitalWrite(ylwLED, HIGH);
 }
+// un-sets the avoid leds (yellow off)
 void setAvoidLedsOff() {
   digitalWrite(ylwLED, LOW);
 }
+// sets the follow leds (yellow and green on)
 void setFollowLedsOn() {
   digitalWrite(ylwLED, HIGH);
   digitalWrite(grnLED, HIGH);
 }
+// un-sets the follow leds (yellow and green off)
 void setFollowLedsOff() {
   digitalWrite(ylwLED, LOW);
   digitalWrite(grnLED, LOW);
 }
 
+// gets the y component of always forward random wander. This varies
 float alwaysForwardRandomWanderY() {
   setRandomWanderLedsOn();
   static float y = 0;
@@ -788,6 +812,7 @@ float alwaysForwardRandomWanderY() {
   return y*RANDOM_WANDER_SCALE;
 }
 
+// gets the x component of always forward random wander. This doesn't vary (because always forward)
 float alwaysForwardRandomWanderX() {
   setRandomWanderLedsOn();
   return MOVE_VEL*RANDOM_WANDER_SCALE; //always forward
@@ -825,6 +850,7 @@ void collide(struct sensors& data){
   }
 }
 
+// prints if collide says to stop
 void printCollideInfo() {
   Serial.print(collideSaysToStop?"   is":"isn't");
   Serial.print(" colliding");
@@ -920,6 +946,7 @@ void avoid(float x, float y, struct sensors& data) {
   }
 }
 
+// moves around to follow a moving obstacle
 void follow(float x, float y, struct sensors& data) {
   float sensorX = getSensorPushX(data);
   float sensorY = getSensorPushY(data);
@@ -970,6 +997,8 @@ void follow(float x, float y, struct sensors& data) {
 float spinCount = 0;
 #define SPIN_AMT 70
 
+
+// Follows (drives along) a wall. Returns true if there is a wall the robot is now following, false if there is nothing to follow.
 bool wallFollow(struct sensors& data){
 
   bool leftReading=data.lidars[2] < 50;
@@ -1045,7 +1074,7 @@ int sonarStateCount = 0;
 int sticky1 = 0;
 int sticky2 = 0;
 
-// will give up early if the wall isn't in the way of the target
+// Same as wallFollow except it also considers a target to go to, and will break away from the wall (return false) if the wall isn't in the way of the target.
 bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
 
   // printSensorData(data);
@@ -1184,6 +1213,7 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
   return true;
 }
 
+// Go to goal (driving forwards) taking odometry into account. goToGoal is relative coordinates, this is absolute coordinates.
 bool betterGoToGoal(float targetX, float targetY){
   float deltaX = targetX-currentX;
   float deltaY = targetY-currentY;
@@ -1211,6 +1241,7 @@ bool betterGoToGoal(float targetX, float targetY){
   return linvel==0&&angvel==0;
 }
 
+// Same as betterGoToGoal except it drives backwards to the goal.
 bool backwardsBetterGoToGoal(float targetX, float targetY){
   float deltaX = targetX-currentX;
   float deltaY = targetY-currentY;
@@ -1239,7 +1270,7 @@ bool backwardsBetterGoToGoal(float targetX, float targetY){
   return linvel==0&&angvel==0;
 }
 
-//M7 (main processor)
+//M7 loop (main processor)
 void loopM7() {
   if((millis() - lastLoopTime) >= LOOP_TIME){
 
