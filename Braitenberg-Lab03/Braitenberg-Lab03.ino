@@ -1297,10 +1297,11 @@ void loopM7() {
     }
 
     lastLoopTime = millis();
+    updateMotors();
+
   } //end if
 
 
-  updateMotors();
 } //end loop
 
 //setup function for both processors
