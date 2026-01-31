@@ -10,6 +10,8 @@
   Key functions:
   TODO: write key functions with short descriptions
 
+
+
   Interrupts
   https://www.arduino.cc/reference/en/language/functions/external-interrupts/attachinterrupt/
   https://www.arduino.cc/en/Tutorial/CurieTimer1Interrupt
@@ -253,7 +255,7 @@ void initNewSonar(int sonarIndex) {
 void setupM4() {
   RPC.bind("read_sensors", read_sensors);  // bind a method to return the sensor data all at once
 
-  // imu
+  // imu that we arent using rn
   // #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
   //     Wire.begin();
   // #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
@@ -1045,20 +1047,8 @@ bool wallFollow(struct sensors& data){
     if(backReading) spinCount = -15; 
   } else {
 
-    // bool leftReading2=data.newSonars[0] < 15;
-    // bool rightReading2=data.newSonars[1] < 15;
-    // if(leftReading2) angvel -= maxOutsideCornerAngSpeed;
-    // if(rightReading2) angvel += maxOutsideCornerAngSpeed;
-    // linvel = aroundOutsideCornerLinSpeed;
-
-    // if(!leftReading2 && !rightReading2) return false;
-
     return false;
-    // // off?
-    // digitalWrite(redLED, LOW);
-    // digitalWrite(ylwLED, LOW);
-    // digitalWrite(grnLED, LOW);
-    // digitalWrite(bluLED, LOW);
+
   }
 
   
@@ -1170,45 +1160,11 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
     // turn 90
   } else {
     return false;
-    // // bool leftReading2=data.newSonars[0] < 15;
-    // // bool rightReading2=data.newSonars[1] < 15;
-    // if(data.newSonars[0] < 20){
-    //   sticky1 = 5;
-    // }
-    // if(data.newSonars[1] < 20){
-    //   sticky2 = 5;
-    // }
-    // // bool rightReading2=data.newSonars[1] < 15;)
-    // // bool rightReading2=data.newSonars[1] < 15;
-    // if(sticky1 > 0) angvel -= maxOutsideCornerAngSpeed;
-    // if(sticky2 > 0) angvel += maxOutsideCornerAngSpeed;
-    // linvel = aroundOutsideCornerLinSpeed;
-
-    
-    // // first wall seen is back wall
-    // if(backReading) spin(PI/2*0.8);
-
-    // if(sticky1 == 0 && sticky2 == 0) {
-
-    //   return false;
-    // };
-
-    // sonarStateCount=0;
-    // if(sticky1>0) sticky1--;
-    // if(sticky2>0) sticky2--;
-
-    // off?
-    // digitalWrite(redLED, LOW);
-    // digitalWrite(ylwLED, LOW);
-    // digitalWrite(grnLED, LOW);
-    // digitalWrite(bluLED, HIGH);    
+  
   }
 
   if(sonarStateCount>0) sonarStateCount--;
-  // follow backwards (negative both terms)
-    //   Serial.print("   ");
-    // Serial.print(angvel);
-    // Serial.print(" angvel2 ");
+
   moveVelo(-linvel, angvel);
   return true;
 }
