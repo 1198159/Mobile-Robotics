@@ -52,6 +52,7 @@
 #include <AccelStepper.h>//include the stepper motor library
 #include <MultiStepper.h>//include multiple stepper motor library
 #include "wallFollow.h"
+#include "goToAngleController.h"
 
 #include "RPC.h" //for other core
 
@@ -85,7 +86,7 @@ MultiStepper steppers;//create instance to control multiple steppers at the same
 
 #define stepperEnTrue false //variable for enabling stepper motor
 #define stepperEnFalse true //variable for disabling stepper motor
-#define max_speed 4000 //maximum stepper motor speed
+#define max_speed 3000 //maximum stepper motor speed
 #define max_accel 1000 //maximum motor acceleration
 
 int pauseTime = 2500;   //time before robot moves in ms
@@ -764,14 +765,14 @@ void move(float lindist, float angdist) {
 
 // tells both motors to run()
 void updateMotors() {
-  stepperLeft.run();
-  stepperRight.run();
+  stepperLeft.runSpeed();
+  stepperRight.runSpeed();
 }
 
 // nonblocking, sets speeds, need to call updateMotors() rapeatedly after
 // doesn't limit the speeds, so be careful of moving too fast
 float pastSpeed1 = 0, pastSpeed2 = 0;
-#define MAX_SPEED_DELTA  3.0f
+#define MAX_SPEED_DELTA  20.0f
 void moveVelo(float linvel, float angvel){
 
   // digitalWrite(stepperEnable, linvel==0 && angvel==0);//turns off the stepper motor driver to stop the terrible whining noise when not trying to move
@@ -951,10 +952,10 @@ void setupM7() {
 
 
   Serial.begin(baudrate);     //start serial monitor communication
-  delay(pauseTime); //always wait 2.5 seconds before the robot moves
+  // delay(pauseTime); //always wait 2.5 seconds before the robot moves
 
   // imu
-  initImu();
+  initImu(); //takes time
 
 
   Serial.println("Robot starting...Put ON TEST STAND");
@@ -1305,7 +1306,7 @@ void loopM7() {
 
     readImuYPR();
     // Serial.println(ypr[0]); //print yaw
-    printImuYPR();
+    // printImuYPR();
 
     // printSensorData(data);
     // printOdometry();
@@ -1323,20 +1324,25 @@ void loopM7() {
       // moveVelo(30, 0); //slow forward
       // moveVelo(30, 0.0492126); //slow around circle of track
 
-      float targetX = -1828.8; //6 ft
-      float targetY = 0;
+      // wall follow with go to goal
+      // float targetX = -1828.8; //6 ft
+      // float targetY = 0;
+      // if(!wallFollowAdjusted(data, targetX, targetY)) {
+      //   // random wander if wall follow fails
+      //   // moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
 
-      if(!wallFollowAdjusted(data, targetX, targetY)) {
-        // random wander if wall follow fails
-        // moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
+      //   digitalWrite(redLED, LOW);
+      //   digitalWrite(ylwLED, LOW);
+      //   digitalWrite(grnLED, LOW);
+      //   digitalWrite(bluLED, LOW); 
 
-        digitalWrite(redLED, LOW);
-        digitalWrite(ylwLED, LOW);
-        digitalWrite(grnLED, LOW);
-        digitalWrite(bluLED, LOW); 
+      //   backwardsBetterGoToGoal(targetX, targetY);
+      // }
 
-        backwardsBetterGoToGoal(targetX, targetY);
-      }
+
+      float angvel=0;
+      calculateGoToAngle(LOOP_TIME, PI, ypr[0], &angvel);
+      moveVelo(0, angvel);
 
 
       // just avoid
@@ -1355,10 +1361,10 @@ void loopM7() {
     }
 
     lastLoopTime = millis();
-    updateMotors();
 
   } //end if
 
+  updateMotors();
 
 } //end loop
 
