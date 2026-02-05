@@ -57,6 +57,10 @@
 #include "RPC.h" //for other core
 
 
+// wifi
+#include <SPI.h>
+#include <WiFi.h>
+
 // imu
 // #include <MPU6050.h> 
 #include <I2Cdev.h>
@@ -64,6 +68,8 @@
     #include "Wire.h"
 #endif
 #include "MPU6050_6Axis_MotionApps20.h"
+
+
 
 //state LEDs connections
 #define redLED 5            //red LED for displaying states
@@ -942,6 +948,7 @@ float getSensorPushY(struct sensors& data){
 
 //M7 (main processor)
 void setupM7() {
+
   int baudrate = 115200; //serial monitor baud rate'
   init_stepper(); //set up stepper motor
 
@@ -959,6 +966,25 @@ void setupM7() {
 
 
   Serial.println("Robot starting...Put ON TEST STAND");
+
+  if (WiFi.status() == WL_NO_MODULE) {
+    Serial.println("Communication with WiFi module failed!");
+    // don't continue
+  } else {
+    int status = WL_IDLE_STATUS;
+    while (status != WL_CONNECTED) {
+      char ssid[] = "ehbox";
+      char pass[] = "12345678";
+      Serial.print("Attempting to connect to WPA SSID: ");
+      Serial.println(ssid);
+      // Connect to WPA/WPA2 network:
+      status = WiFi.begin(ssid, pass);
+
+      // wait 1 second for connection:
+      delay(1000);
+    }
+    Serial.println("connected");
+  }
 }
 
 // takes a base x and y to go to, changes it for avoiding obstacles
