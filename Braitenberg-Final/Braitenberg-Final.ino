@@ -47,6 +47,17 @@
   See PlatformIO documentation for proper way to install libraries in Visual Studio
 */
 
+
+
+// wifi
+#include <WiFi.h>
+#include <SPI.h>
+
+
+// wifi
+WiFiServer server(23);
+
+
 //include all necessary libraries
 #include <Arduino.h>//include for PlatformIO Ide
 #include <AccelStepper.h>//include the stepper motor library
@@ -55,11 +66,6 @@
 #include "goToAngleController.h"
 
 #include "RPC.h" //for other core
-
-
-// wifi
-#include <SPI.h>
-#include <WiFi.h>
 
 // imu
 // #include <MPU6050.h> 
@@ -946,6 +952,7 @@ float getSensorPushY(struct sensors& data){
   return y*SENSOR_PUSH_SCALE;
 }
 
+
 //M7 (main processor)
 void setupM7() {
 
@@ -961,12 +968,16 @@ void setupM7() {
   Serial.begin(baudrate);     //start serial monitor communication
   // delay(pauseTime); //always wait 2.5 seconds before the robot moves
 
+  Serial.println("\n");
+
   // imu
   initImu(); //takes time
 
 
   Serial.println("Robot starting...Put ON TEST STAND");
 
+
+  // wifi
   if (WiFi.status() == WL_NO_MODULE) {
     Serial.println("Communication with WiFi module failed!");
     // don't continue
@@ -983,7 +994,8 @@ void setupM7() {
       // wait 1 second for connection:
       delay(1000);
     }
-    Serial.println("connected");
+    Serial.println("connected to hotspot");
+    server.begin();
   }
 }
 
@@ -1320,6 +1332,10 @@ bool backwardsBetterGoToGoal(float targetX, float targetY){
   return linvel==0&&angvel==0;
 }
 
+boolean alreadyConnected = false;
+
+WiFiClient client;
+
 //M7 loop (main processor)
 void loopM7() {
   if((millis() - lastLoopTime) >= LOOP_TIME){
@@ -1328,6 +1344,47 @@ void loopM7() {
     readSensorData(data); //can be problematic if the sensors struct changes. 
     // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
     updateOdometry();
+
+    
+    if(!alreadyConnected)
+      client = server.accept(); //not blocking
+
+
+    // when the client sends the first byte, say hello:
+    if (client) {
+      if (!alreadyConnected) {
+        // clear out the input buffer:
+        client.flush();
+        Serial.println("We have a new client");
+        alreadyConnected = true;
+      }
+
+
+      if (client.available() > 0) {
+
+        
+        // old way (appears slowly)
+        // char thisChar = client.read(); // read the bytes incoming from the client:
+        // client.write(thisChar); // echo the bytes back to the client:
+        // Serial.print(thisChar); // print the bytes
+
+        // new way (appears instantly)
+        Serial.println("Message received: '");
+        char buf[64];
+        int r = client.read((uint8_t*)(&buf), 63);
+        buf[r]='\0';
+        Serial.print(buf);
+        Serial.println("'");
+
+        client.write("Even grater message to send back to the lab of mats because mats are cool\n");
+
+      }
+
+      if(!client.connected()) {
+        alreadyConnected=false;
+        Serial.println("Lost the client, looking for another\n");
+      }
+    }
 
 
     readImuYPR();

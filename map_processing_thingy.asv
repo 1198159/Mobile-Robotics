@@ -161,20 +161,16 @@ printwallmap(rotatedmap)
 
 %test wifi comms
 fprintf("\nstarting comms\n");
-%tcpclientfind("Port", 23)
-client = tcpclient("192.168.137.214", 23, "Timeout", 5); %to check ip address: right click mobile hotspot, go to settings
-fprintf("got client\n");
+tcpclientfind()
+client = tcpclient("192.168.137.90", 23, "Timeout", 5); %to check ip address: right click mobile hotspot, go to settings
 
-pause(1)
+pause(10)
 fprintf("sending a message\n");
-client.write("Super grate message to send to the robot becasue sending messages is cool\n")
-client.flush()
-fprintf("done sending a message\n");
+client.write('This is a test')
 
+client.get()
 
-fprintf("Message received: '");
-fprintf(client.readline())
-fprintf("'\nDone receiving message\n");
+fprintf("done comms, entering loop\n");
+while(true) 
 
-%disconnect from robot
-delete(client)
+end
