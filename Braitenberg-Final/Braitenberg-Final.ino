@@ -209,15 +209,16 @@ uint16_t packetSize;    // Expected DMP packet size (default is 42 bytes)
 uint8_t FIFOBuffer[64]; // FIFO storage buffer
 VectorFloat gravity;    // [x, y, z]            Gravity vector
 Quaternion q;           // [w, x, y, z]         Quaternion container
-float ypr[3];           // [yaw, pitch, roll]   Yaw/Pitch/Roll container and gravity vector
+//float ypr[3];           // [yaw, pitch, roll]   Yaw/Pitch/Roll container and gravity vector
 
 // struct for all sensor readings
 struct sensors {
   float lidars[numLidars];
   float sonars[numSonars];
   float newSonars[numNewSonars];
+  float ypr[3];
   // this defines some helper functions that allow RPC to send our struct (I [Berry] found this on a random forum)
-  MSGPACK_DEFINE_ARRAY(lidars, sonars, newSonars);  //https://stackoverflow.com/questions/37322145/msgpack-to-pack-structures https://www.appsloveworld.com/cplus/100/391/msgpack-to-pack-structures
+  MSGPACK_DEFINE_ARRAY(lidars, sonars, newSonars, ypr);  //https://stackoverflow.com/questions/37322145/msgpack-to-pack-structures https://www.appsloveworld.com/cplus/100/391/msgpack-to-pack-structures
 } sense;
 
 // when a sensor sucessfully reads, the corresponding sensor gets set to 0, each time it doesn't read it increments by one
@@ -225,7 +226,6 @@ struct timesNoReadStruct {
   unsigned int lidars[numLidars];
   unsigned int sonars[numSonars];
   unsigned int newSonars[numNewSonars];
-
   // doesn't need to be sent across processors
   // MSGPACK_DEFINE_ARRAY(lidar_front, lidar_back, lidar_left, lidar_right, sonar_left, sonar_right);
 } timesNoRead;
@@ -334,18 +334,18 @@ void readImuYPR() {
   if (accelgyro.dmpGetCurrentFIFOPacket(FIFOBuffer)) {
     accelgyro.dmpGetQuaternion(&q, FIFOBuffer);
     accelgyro.dmpGetGravity(&gravity, &q);
-    accelgyro.dmpGetYawPitchRoll(ypr, &q, &gravity);
+    accelgyro.dmpGetYawPitchRoll(sense.ypr, &q, &gravity);
   }
 }
 
 // prints yaw, pitch, and roll, in radians
 void printImuYPR() {
   Serial.print("yaw: ");
-  Serial.print(ypr[0]);
+  Serial.print(sense.ypr[0]);
   Serial.print(", \t  pitch: ");
-  Serial.print(ypr[1]);
+  Serial.print(sense.ypr[1]);
   Serial.print(", \t  roll: ");
-  Serial.println(ypr[2]);
+  Serial.println(sense.ypr[2]);
 }
 
 void initAllSensors() {
@@ -972,12 +972,15 @@ void tryConnect() {
       // Connect to WPA/WPA2 network:
       status = WiFi.begin(ssids[i], pass);
 
+      if(status == WL_CONNECTED) break;
+
       // wait 0.1 seconds for connection:
       delay(100);
       i++;
       if(i==numSsids) i=0;
     }
-    Serial.println(" Connected! Waiting for client...");
+    Serial.print(" Connected to: ");
+    Serial.println(ssids[i]);
     IPAddress ip = WiFi.localIP();
     Serial.print("IP Address: ");
     Serial.println(ip);
@@ -1357,6 +1360,12 @@ void setupM4() {
  
 } //end setupM4
 
+
+int moveIndex = 0;
+float targetXs[] = {-457.2, -914.4, -914.4};
+float targetYs[] = {0, 0, -457.2};
+int numMoves = 3;
+
 // M4 (coprocessor) 
 void loopM4() {
   readAllSensors();
@@ -1365,7 +1374,7 @@ void loopM4() {
   if((millis() - lastLoopTime) >= LOOP_TIME){
 
     readImuYPR();
-    // Serial.println(ypr[0]); //print yaw
+    // Serial.println(sense.ypr[0]); //print yaw
     // printImuYPR();
 
     // printSensorData(sense);
@@ -1378,31 +1387,40 @@ void loopM4() {
     // if(true){
       // backwardsBetterGoToGoal(1000, 1000);
     // }
-    if(false) {
+    if(moveIndex==numMoves) {
       moveVelo(0, 0); //stop
+      
+      digitalWrite(redLED, LOW);
+      digitalWrite(ylwLED, LOW);
+      digitalWrite(grnLED, LOW);
+      digitalWrite(bluLED, HIGH); 
     } else {
       // moveVelo(30, 0); //slow forward
       // moveVelo(30, 0.0492126); //slow around circle of track
 
       // wall follow with go to goal
-      // float targetX = -1828.8; //6 ft
-      // float targetY = 0;
-      // if(!wallFollowAdjusted(sense, targetX, targetY)) {
-      //   // random wander if wall follow fails
-      //   // moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
+      float targetX = targetXs[moveIndex];
+      float targetY = targetYs[moveIndex];
+      if(!wallFollowAdjusted(sense, targetX, targetY)) {
+        // random wander if wall follow fails
+        // moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
 
-      //   digitalWrite(redLED, LOW);
-      //   digitalWrite(ylwLED, LOW);
-      //   digitalWrite(grnLED, LOW);
-      //   digitalWrite(bluLED, LOW); 
+        digitalWrite(redLED, LOW);
+        digitalWrite(ylwLED, LOW);
+        digitalWrite(grnLED, LOW);
+        digitalWrite(bluLED, LOW); 
 
-      //   backwardsBetterGoToGoal(targetX, targetY);
-      // }
+        if(backwardsBetterGoToGoal(targetX, targetY)){
+          moveIndex++;
+        }
+        
+      }
 
 
-      float angvel=0;
-      calculateGoToAngle(LOOP_TIME, PI, ypr[0], &angvel);
-      moveVelo(0, angvel);
+      // go to angle
+      // float angvel=0;
+      // calculateGoToAngle(LOOP_TIME, PI, sense.ypr[0], &angvel);
+      // moveVelo(0, angvel);
 
 
       // just avoid
@@ -1445,13 +1463,11 @@ void setupM7() {
 }
 
 
+unsigned int numSendMessages = 0;
+
 //M7 (main processor)
 void loopM7() {
-  // struct sensors data;
-  // readSensorData(data); //can be problematic if the sensors struct changes. 
-    // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
   
-
 
   if(WiFi.status()==5) {
       Serial.println("We got disconnected from the hotspot. Reconnecting");
@@ -1475,7 +1491,7 @@ void loopM7() {
         Serial.println("Lost the client, looking for another\n");
       }
 
-
+      // read from client
       if (client.available() > 0) {
         Serial.print("Message received: '");
         char buf[501];
@@ -1483,9 +1499,22 @@ void loopM7() {
         buf[r]='\0';
         Serial.print(buf);
         Serial.println("'");
+
+        if(0==strncmp(buf, "ps", 2)){ //if they send 'ps' for poll sensors
+          struct sensors data;
+          readSensorData(data); //can be problematic if the sensors struct changes. 
+          // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
+          snprintf(buf, 500, "%f, %f, %f, %f, %f, %f, %f\n", data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], data.newSonars[0], data.newSonars[1], data.ypr[0]);
+        } else { //if they sent an unrecognized
+          snprintf(buf, 500, "Unrecognized command num %d\n", numSendMessages++);
+        }
+
+        client.write(buf);
+        Serial.print("Sending back: '");
+        Serial.print(buf);
+        Serial.println("'");
       }
 
-      client.write("Even grater message to send back to the lab of mats because mats are cool\n");
     }
 } //end loopM7
 
