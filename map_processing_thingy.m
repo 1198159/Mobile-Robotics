@@ -180,7 +180,8 @@ if r==1
     fprintf("got client\n");
     
     %send a message
-    fprintf("sending a message\n");
+    fprintf("sending a message\n");clc
+    
     client.write("Super grate message to send to the robot becasue sending messages is cool")
     client.flush()
     fprintf("done sending a message\n");
