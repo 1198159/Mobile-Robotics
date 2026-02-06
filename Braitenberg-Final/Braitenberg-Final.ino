@@ -348,10 +348,7 @@ void printImuYPR() {
   Serial.println(ypr[2]);
 }
 
-//set up the M4 (coprocessor) to be sensor server
-void setupM4() {
-  RPC.bind("read_sensors", read_sensors);  // bind a method to return the sensor data all at once
-
+void initAllSensors() {
   for(int i=0; i<numLidars; i++)
     initLidar(i);
   for(int i=0; i<numSonars; i++)
@@ -359,6 +356,7 @@ void setupM4() {
   for(int i=0; i<numNewSonars; i++)
     initNewSonar(i);
 }
+
 
 // Reads the lidar given the lidar index.
 void readLidar(int lidarIndex){
@@ -513,9 +511,8 @@ bool readNewSonar(int sonarIndex){
   return false;
 }
 
-//poll the M4 (coprocessor) to read the sensor data
-void loopM4() {
 
+void readAllSensors() {
   // the lidars don't interfere, they all can be read at the same time  
   for(int lidarIndex=0; lidarIndex<numLidars; lidarIndex++){
     readLidar(lidarIndex);
@@ -540,6 +537,7 @@ void loopM4() {
   //   }
   // }
 }
+
 
 // function for the m7 to call to get data from the m4
 void readSensorData(struct sensors& data) {
@@ -988,30 +986,6 @@ void tryConnect() {
 }
 
 
-//M7 (main processor)
-void setupM7() {
-
-  int baudrate = 115200; //serial monitor baud rate'
-  init_stepper(); //set up stepper motor
-
-  attachInterrupt(digitalPinToInterrupt(ltEncoder), LwheelSpeed, CHANGE);    //init the interrupt mode for the left encoder
-  attachInterrupt(digitalPinToInterrupt(rtEncoder), RwheelSpeed, CHANGE);   //init the interrupt mode for the right encoder
-
-  randomSeed(analogRead(0)); //analog0 is not connected, so use noise to set the seed
-
-
-  Serial.begin(baudrate);     //start serial monitor communication
-  // delay(pauseTime); //always wait 2.5 seconds before the robot moves
-
-  Serial.println("\n");
-
-  // imu
-  initImu(); //takes time
-
-  // wifi
-  tryConnect(); //takes time
- 
-}
 
 // takes a base x and y to go to, changes it for avoiding obstacles
 void avoid(float x, float y, struct sensors& data) {
@@ -1350,16 +1324,136 @@ boolean alreadyConnected = false;
 
 WiFiClient client;
 
-//M7 loop (main processor)
-void loopM7() {
+
+
+
+int baudrate = 115200; //serial monitor baud rate'
+
+// M4 (coprocessor) 
+void setupM4() {
+
+  init_stepper(); //set up stepper motor
+
+  attachInterrupt(digitalPinToInterrupt(ltEncoder), LwheelSpeed, CHANGE);    //init the interrupt mode for the left encoder
+  attachInterrupt(digitalPinToInterrupt(rtEncoder), RwheelSpeed, CHANGE);   //init the interrupt mode for the right encoder
+
+  randomSeed(analogRead(0)); //analog0 is not connected, so use noise to set the seed
+
+
+  Serial.begin(baudrate);     //start serial monitor communication
+  // delay(pauseTime); //always wait 2.5 seconds before the robot moves
+
+  Serial.println("\n");
+
+
+  initAllSensors();
+
+  // set up to be sensor server
+  RPC.bind("read_sensors", read_sensors);  // bind a method to return the sensor data all at once
+
+  // imu
+  initImu(); //takes time
+
+ 
+} //end setupM4
+
+// M4 (coprocessor) 
+void loopM4() {
+  readAllSensors();
+  updateOdometry();
+
   if((millis() - lastLoopTime) >= LOOP_TIME){
 
-    struct sensors data;
-    readSensorData(data); //can be problematic if the sensors struct changes. 
-    // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
-    updateOdometry();
+    readImuYPR();
+    // Serial.println(ypr[0]); //print yaw
+    // printImuYPR();
 
-    if(WiFi.status()==5) {
+    // printSensorData(sense);
+    // printOdometry();
+
+    // Serial.println();
+    //  collide:
+    // collide(sense); //only using lidars for collide for now
+    // printCollideInfo();
+    // if(true){
+      // backwardsBetterGoToGoal(1000, 1000);
+    // }
+    if(false) {
+      moveVelo(0, 0); //stop
+    } else {
+      // moveVelo(30, 0); //slow forward
+      // moveVelo(30, 0.0492126); //slow around circle of track
+
+      // wall follow with go to goal
+      // float targetX = -1828.8; //6 ft
+      // float targetY = 0;
+      // if(!wallFollowAdjusted(sense, targetX, targetY)) {
+      //   // random wander if wall follow fails
+      //   // moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
+
+      //   digitalWrite(redLED, LOW);
+      //   digitalWrite(ylwLED, LOW);
+      //   digitalWrite(grnLED, LOW);
+      //   digitalWrite(bluLED, LOW); 
+
+      //   backwardsBetterGoToGoal(targetX, targetY);
+      // }
+
+
+      float angvel=0;
+      calculateGoToAngle(LOOP_TIME, PI, ypr[0], &angvel);
+      moveVelo(0, angvel);
+
+
+      // just avoid
+      // avoid(0, 0, sense);
+
+      // avoid with random wander
+      // avoid(alwaysForwardRandomWanderX(), alwaysForwardRandomWanderY(), sense);
+
+      // betterGoToGoal(0, 0);
+      // backwardsBetterGoToGoal(0, 0);
+
+
+      // just follow
+      // follow(0, 0, sense);
+
+    }
+
+    lastLoopTime = millis();
+
+  } //end if
+
+  updateMotors();
+
+} //end loopM4
+
+
+
+
+//M7 (main processor)
+void setupM7() {
+
+  delay(1000);
+  // Serial.begin(baudrate);     //start serial monitor communication
+
+  
+  // wifi
+  tryConnect(); //takes time
+  
+  
+}
+
+
+//M7 (main processor)
+void loopM7() {
+  // struct sensors data;
+  // readSensorData(data); //can be problematic if the sensors struct changes. 
+    // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
+  
+
+
+  if(WiFi.status()==5) {
       Serial.println("We got disconnected from the hotspot. Reconnecting");
       tryConnect();
     }
@@ -1392,74 +1486,9 @@ void loopM7() {
       }
 
       client.write("Even grater message to send back to the lab of mats because mats are cool\n");
-
-      
     }
+} //end loopM7
 
-
-    readImuYPR();
-    // Serial.println(ypr[0]); //print yaw
-    // printImuYPR();
-
-    // printSensorData(data);
-    // printOdometry();
-
-    // Serial.println();
-    //  collide:
-    // collide(data); //only using lidars for collide for now
-    // printCollideInfo();
-    // if(true){
-      // backwardsBetterGoToGoal(1000, 1000);
-    // }
-    if(false) {
-      moveVelo(0, 0); //stop
-    } else {
-      // moveVelo(30, 0); //slow forward
-      // moveVelo(30, 0.0492126); //slow around circle of track
-
-      // wall follow with go to goal
-      // float targetX = -1828.8; //6 ft
-      // float targetY = 0;
-      // if(!wallFollowAdjusted(data, targetX, targetY)) {
-      //   // random wander if wall follow fails
-      //   // moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
-
-      //   digitalWrite(redLED, LOW);
-      //   digitalWrite(ylwLED, LOW);
-      //   digitalWrite(grnLED, LOW);
-      //   digitalWrite(bluLED, LOW); 
-
-      //   backwardsBetterGoToGoal(targetX, targetY);
-      // }
-
-
-      float angvel=0;
-      calculateGoToAngle(LOOP_TIME, PI, ypr[0], &angvel);
-      moveVelo(0, angvel);
-
-
-      // just avoid
-      // avoid(0, 0, data);
-
-      // avoid with random wander
-      // avoid(alwaysForwardRandomWanderX(), alwaysForwardRandomWanderY(), data);
-
-      // betterGoToGoal(0, 0);
-      // backwardsBetterGoToGoal(0, 0);
-
-
-      // just follow
-      // follow(0, 0, data);
-
-    }
-
-    lastLoopTime = millis();
-
-  } //end if
-
-  updateMotors();
-
-} //end loop
 
 //setup function for both processors
 void setup() {
