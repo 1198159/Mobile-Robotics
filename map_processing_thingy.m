@@ -162,19 +162,40 @@ printwallmap(rotatedmap)
 %test wifi comms
 fprintf("\nstarting comms\n");
 %tcpclientfind("Port", 23)
-client = tcpclient("192.168.137.60", 23, "Timeout", 5); %to check ip address: right click mobile hotspot, go to settings
-fprintf("got client\n");
 
-pause(1)
-fprintf("sending a message\n");
-client.write("Super grate message to send to the robot becasue sending messages is cool")
-client.flush()
-fprintf("done sending a message\n");
+%get ip addresses, find one that looks right (starts with 192.168.137)
+[status,result] = system('arp -a');
+pat = regexpPattern("192\.168\.137\.[0-9]+");
+ipAddrArray = extract(result, pat);
 
+[r, c]=size(ipAddrArray);
 
-fprintf("Message received: '");
-fprintf(client.readline())
-fprintf("'\nDone receiving message\n");
+%if there was an ip address found
+if r==1
+    ipAddr = ipAddrArray{1}
+    
+    %connect as a client (robot is the server)
+    client = tcpclient(ipAddr, 23, "Timeout", 5); %to check ip address: right click mobile hotspot, go to settings
+    fprintf("got client\n");
+    
+    %send a message
+    fprintf("sending a message\n");
+    client.write("Super grate message to send to the robot becasue sending messages is cool")
+    client.flush()
+    fprintf("done sending a message\n");
+    
+    %receive a message
+    received = client.readline();
+    fprintf("Message received: '");
+    fprintf(received)
+    fprintf("'\nDone receiving message\n");
+    
+    %disconnect from robot
+    delete(client)
 
-%disconnect from robot
-delete(client)
+   
+else
+    
+    fprintf("No ip found, check if hotspot is on and robot is on\n");
+
+end

@@ -1359,6 +1359,10 @@ void loopM7() {
     // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
     updateOdometry();
 
+    if(WiFi.status()==5) {
+      Serial.println("We got disconnected from the hotspot. Reconnecting");
+      tryConnect();
+    }
 
     if(!alreadyConnected)
       client = server.accept(); //not blocking
