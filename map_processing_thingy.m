@@ -163,10 +163,11 @@ printwallmap(rotatedmap)
 fprintf("\nstarting comms\n");
 %tcpclientfind("Port", 23)
 
-%get ip addresses, find one that looks right (starts with 192.168.137)
-[status,result] = system('arp -a');
+%get ip addresses, find one that looks right (starts with 192.168.137).  
+%Not sure if it only starts this way on my computer.
+[status,result] = system('arp -a'); %windows command to get a bunch of ip addresses
 pat = regexpPattern("192\.168\.137\.[0-9]+");
-ipAddrArray = extract(result, pat);
+ipAddrArray = extract(result, pat); %use the regex to find 0 or 1 ip addresses
 
 [r, c]=size(ipAddrArray);
 
@@ -184,18 +185,17 @@ if r==1
     client.flush()
     fprintf("done sending a message\n");
     
-    %receive a message
-    received = client.readline();
-    fprintf("Message received: '");
-    fprintf(received)
-    fprintf("'\nDone receiving message\n");
-    
+    while(true)
+        %receive a message
+        received = client.readline();
+        fprintf("Message received: '");
+        fprintf(received)
+        fprintf("'\nDone receiving message\n");
+    end
+
     %disconnect from robot
     delete(client)
 
-   
-else
-    
+else %no ip address found
     fprintf("No ip found, check if hotspot is on and robot is on\n");
-
 end

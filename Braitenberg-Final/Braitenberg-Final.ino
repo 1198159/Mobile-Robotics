@@ -98,7 +98,7 @@ MultiStepper steppers;//create instance to control multiple steppers at the same
 
 #define stepperEnTrue false //variable for enabling stepper motor
 #define stepperEnFalse true //variable for disabling stepper motor
-#define max_speed 3000 //maximum stepper motor speed
+#define max_speed 300 //maximum stepper motor speed. Prevent skipping ticks.
 #define max_accel 1000 //maximum motor acceleration
 
 int pauseTime = 2500;   //time before robot moves in ms
@@ -1376,6 +1376,11 @@ void loopM7() {
         alreadyConnected = true;
       }
 
+      if(!client.connected()) {
+        alreadyConnected=false;
+        Serial.println("Lost the client, looking for another\n");
+      }
+
 
       if (client.available() > 0) {
         Serial.print("Message received: '");
@@ -1384,15 +1389,11 @@ void loopM7() {
         buf[r]='\0';
         Serial.print(buf);
         Serial.println("'");
-
-        client.write("Even grater message to send back to the lab of mats because mats are cool\n");
-
       }
 
-      if(!client.connected()) {
-        alreadyConnected=false;
-        Serial.println("Lost the client, looking for another\n");
-      }
+      client.write("Even grater message to send back to the lab of mats because mats are cool\n");
+
+      
     }
 
 
