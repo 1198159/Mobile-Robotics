@@ -283,16 +283,16 @@ void initImu() {
 
   accelgyro.initialize();
 
-  Serial.println(F("Testing MPU6050 connection..."));
+  // Serial.println(F("Testing MPU6050 connection..."));
   if(accelgyro.testConnection() == false){
     Serial.println("MPU6050 connection failed");
     // while(true);
   }
   else {
-    Serial.println("MPU6050 connection successful");
+    // Serial.println("MPU6050 connection successful");
 
       /* Initializate and configure the DMP*/
-    Serial.println(F("Initializing DMP..."));
+    // Serial.println(F("Initializing DMP..."));
     devStatus = accelgyro.dmpInitialize();
 
     /* Supply your gyro offsets here, scaled for min sensitivity */
@@ -307,21 +307,22 @@ void initImu() {
     if (devStatus == 0) {
       accelgyro.CalibrateAccel(6);  // Calibration Time: generate offsets and calibrate our MPU6050
       accelgyro.CalibrateGyro(6);
-      Serial.println("These are the Active offsets: ");
-      accelgyro.PrintActiveOffsets();
-      Serial.println(F("Enabling DMP..."));   //Turning ON DMP
+      // Serial.println("These are the Active offsets: ");
+      // accelgyro.PrintActiveOffsets();
+      // Serial.println(F("Enabling DMP..."));   //Turning ON DMP
       accelgyro.setDMPEnabled(true);
 
       MPUIntStatus = accelgyro.getIntStatus();
 
       /* Set the DMP Ready flag so the main loop() function knows it is okay to use it */
-      Serial.println(F("DMP ready! Waiting for first interrupt..."));
+      // Serial.println(F("DMP ready! Waiting for first interrupt..."));
       DMPReady = true;
       packetSize = accelgyro.dmpGetFIFOPacketSize(); //Get expected DMP packet size for later comparison
     }
 
   }
 
+  Serial.println();
 }
 
 // sets the values in the ypr array (yaw pitch roll, each in radians).
@@ -953,6 +954,40 @@ float getSensorPushY(struct sensors& data){
 }
 
 
+
+void tryConnect() {
+  // wifi
+  if (WiFi.status() == WL_NO_MODULE) {
+    Serial.println("Communication with WiFi module failed!");
+    // don't continue
+  } else {
+    int status = WL_IDLE_STATUS;
+    int i=0;
+    int numSsids = 2;
+    char ssid0[] = "EEEEEE";
+    char ssid1[] = "ehbox";
+    char* ssids[] = {ssid0, ssid1};
+    char pass[] = "12345678";
+    while (status != WL_CONNECTED) {
+      Serial.print("Attempting to connect to: ");
+      Serial.println(ssids[i]); //pointer math!
+      // Connect to WPA/WPA2 network:
+      status = WiFi.begin(ssids[i], pass);
+
+      // wait 0.1 seconds for connection:
+      delay(100);
+      i++;
+      if(i==numSsids) i=0;
+    }
+    Serial.println(" Connected! Waiting for client...");
+    IPAddress ip = WiFi.localIP();
+    Serial.print("IP Address: ");
+    Serial.println(ip);
+    server.begin();
+  }
+}
+
+
 //M7 (main processor)
 void setupM7() {
 
@@ -973,30 +1008,9 @@ void setupM7() {
   // imu
   initImu(); //takes time
 
-
-  Serial.println("Robot starting...Put ON TEST STAND");
-
-
   // wifi
-  if (WiFi.status() == WL_NO_MODULE) {
-    Serial.println("Communication with WiFi module failed!");
-    // don't continue
-  } else {
-    int status = WL_IDLE_STATUS;
-    while (status != WL_CONNECTED) {
-      char ssid[] = "ehbox";
-      char pass[] = "12345678";
-      Serial.print("Attempting to connect to WPA SSID: ");
-      Serial.println(ssid);
-      // Connect to WPA/WPA2 network:
-      status = WiFi.begin(ssid, pass);
-
-      // wait 1 second for connection:
-      delay(1000);
-    }
-    Serial.println("connected to hotspot");
-    server.begin();
-  }
+  tryConnect(); //takes time
+ 
 }
 
 // takes a base x and y to go to, changes it for avoiding obstacles
@@ -1345,12 +1359,11 @@ void loopM7() {
     // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
     updateOdometry();
 
-    
+
     if(!alreadyConnected)
       client = server.accept(); //not blocking
 
 
-    // when the client sends the first byte, say hello:
     if (client) {
       if (!alreadyConnected) {
         // clear out the input buffer:
@@ -1361,17 +1374,9 @@ void loopM7() {
 
 
       if (client.available() > 0) {
-
-        
-        // old way (appears slowly)
-        // char thisChar = client.read(); // read the bytes incoming from the client:
-        // client.write(thisChar); // echo the bytes back to the client:
-        // Serial.print(thisChar); // print the bytes
-
-        // new way (appears instantly)
-        Serial.println("Message received: '");
-        char buf[64];
-        int r = client.read((uint8_t*)(&buf), 63);
+        Serial.print("Message received: '");
+        char buf[501];
+        int r = client.read((uint8_t*)(&buf), 500);
         buf[r]='\0';
         Serial.print(buf);
         Serial.println("'");

@@ -162,12 +162,12 @@ printwallmap(rotatedmap)
 %test wifi comms
 fprintf("\nstarting comms\n");
 %tcpclientfind("Port", 23)
-client = tcpclient("192.168.137.214", 23, "Timeout", 5); %to check ip address: right click mobile hotspot, go to settings
+client = tcpclient("192.168.137.60", 23, "Timeout", 5); %to check ip address: right click mobile hotspot, go to settings
 fprintf("got client\n");
 
 pause(1)
 fprintf("sending a message\n");
-client.write("Super grate message to send to the robot becasue sending messages is cool\n")
+client.write("Super grate message to send to the robot becasue sending messages is cool")
 client.flush()
 fprintf("done sending a message\n");
 
