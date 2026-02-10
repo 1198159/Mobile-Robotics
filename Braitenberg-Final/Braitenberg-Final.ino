@@ -369,7 +369,7 @@ void readLidar(int lidarIndex){
     } else {
       // falling edge
       float dist = lidarTimeToDist(micros()-lidarRisingTimes[lidarIndex]);
-      if(dist<LIDAR_FAR_THRESH) {
+      if(dist<LIDAR_FAR_THRESH && dist>0) {//temp: may break things. If distance read negative, say no read
         sense.lidars[lidarIndex] = dist;
         timesNoRead.lidars[lidarIndex] = 0;
       } else {
@@ -377,8 +377,9 @@ void readLidar(int lidarIndex){
       }
     }
   } else if(lidarRisingTimes[lidarIndex]+lidarDisconnectTimeout<=micros()){ //no change for too long
-    // get a strike, but don't change any pins to give up read, also not resetting the timer so this gets all strikes pretty quickly
+    // get a strike, but don't change any pins to give up read
     noRead = true;
+    lidarRisingTimes[lidarIndex] = micros(); //prevent getting all strikes too quickly
   }
 
   if(noRead) {
