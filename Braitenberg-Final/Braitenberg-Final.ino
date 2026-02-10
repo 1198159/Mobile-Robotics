@@ -962,10 +962,11 @@ void tryConnect() {
   } else {
     int status = WL_IDLE_STATUS;
     int i=0;
-    int numSsids = 2;
+    int numSsids = 3;
     char ssid0[] = "EEEEEE";
     char ssid1[] = "ehbox";
-    char* ssids[] = {ssid0, ssid1};
+    char ssid2[] = "computer hotspot";
+    char* ssids[] = {ssid0, ssid1, ssid2};
     char pass[] = "12345678";
     while (status != WL_CONNECTED) {
       Serial.print("Attempting to connect to: ");
@@ -1466,59 +1467,204 @@ void setupM7() {
 
 unsigned int numSendMessages = 0;
 
-//M7 (main processor)
+// M7 (main processor)
+
+// Global variables for robot state
+float currentGridX = 1.0;  // Current grid position X
+float currentGridY = 1.0;  // Current grid position Y
+float positionError = 0.0; // Position error metric
+
 void loopM7() {
   
+  if(WiFi.status() == 5) {
+    Serial.println("We got disconnected from the hotspot. Reconnecting");
+    tryConnect();
+  }
 
-  if(WiFi.status()==5) {
-      Serial.println("We got disconnected from the hotspot. Reconnecting");
-      tryConnect();
+  if(!alreadyConnected)
+    client = server.accept(); // not blocking
+
+  if (client) {
+    if (!alreadyConnected) {
+      // clear out the input buffer:
+      client.flush();
+      Serial.println("We have a new client");
+      alreadyConnected = true;
     }
 
-    if(!alreadyConnected)
-      client = server.accept(); //not blocking
+    if(!client.connected()) {
+      alreadyConnected = false;
+      Serial.println("Lost the client, looking for another\n");
+    }
 
+    // read from client
+    if (client.available() > 0) {
+      Serial.print("Message received: '");
+      char buf[501];
+      int r = client.read((uint8_t*)(&buf), 500);
+      buf[r] = '\0';
+      Serial.print(buf);
+      Serial.println("'");
 
-    if (client) {
-      if (!alreadyConnected) {
-        // clear out the input buffer:
-        client.flush();
-        Serial.println("We have a new client");
-        alreadyConnected = true;
-      }
-
-      if(!client.connected()) {
-        alreadyConnected=false;
-        Serial.println("Lost the client, looking for another\n");
-      }
-
-      // read from client
-      if (client.available() > 0) {
-        Serial.print("Message received: '");
-        char buf[501];
-        int r = client.read((uint8_t*)(&buf), 500);
-        buf[r]='\0';
-        Serial.print(buf);
-        Serial.println("'");
-
-        if(0==strncmp(buf, "ps", 2)){ //if they send 'ps' for poll sensors
-          struct sensors data;
-          readSensorData(data); //can be problematic if the sensors struct changes. 
-          // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
-          snprintf(buf, 500, "%f, %f, %f, %f, %f, %f, %f\n", data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], data.newSonars[0], data.newSonars[1], data.ypr[0]);
-        } else { //if they sent an unrecognized
-          snprintf(buf, 500, "Unrecognized command num %d\n", numSendMessages++);
+      // Parse command
+      if (0 == strncmp(buf, "CONNECT", 7)) {
+        // Connection handshake
+        snprintf(buf, 500, "POS,%.0f,%.0f,%.2f\n", currentGridX, currentGridY, positionError);
+        Serial.println("CONNECT command received");
+        
+      } else if (0 == strncmp(buf, "MOVETO,", 7)) {
+        // Move to absolute grid position
+        // Parse: MOVETO,X,Y
+        float targetX, targetY;
+        if (sscanf(buf + 7, "%f,%f", &targetX, &targetY) == 2) {
+          Serial.print("MOVETO command: target (");
+          Serial.print(targetX, 0);
+          Serial.print(", ");
+          Serial.print(targetY, 0);
+          Serial.println(")");
+          
+          // Execute movement
+          bool success = moveToGridPosition(targetX, targetY);
+          
+          if (success) {
+            // Update current position and calculate error
+            currentGridX = targetX;
+            currentGridY = targetY;
+            positionError = calculatePositionError(targetX, targetY);
+            
+            snprintf(buf, 500, "POS,%.0f,%.0f,%.2f\n", currentGridX, currentGridY, positionError);
+          } else {
+            snprintf(buf, 500, "ERROR,Movement failed\n");
+          }
+        } else {
+          snprintf(buf, 500, "ERROR,Invalid MOVETO format\n");
         }
-
+        
+      } else if (0 == strncmp(buf, "GETPOS", 6)) {
+        // Return current position
+        Serial.println("GETPOS command received");
+        positionError = calculatePositionError(currentGridX, currentGridY);
+        snprintf(buf, 500, "POS,%.0f,%.0f,%.2f\n", currentGridX, currentGridY, positionError);
+        
+      } else if (0 == strncmp(buf, "SETPOS,", 7)) {
+        // Manually set position (calibration)
+        // Parse: SETPOS,X,Y
+        float newX, newY;
+        if (sscanf(buf + 7, "%f,%f", &newX, &newY) == 2) {
+          Serial.print("SETPOS command: setting position to (");
+          Serial.print(newX, 0);
+          Serial.print(", ");
+          Serial.print(newY, 0);
+          Serial.println(")");
+          
+          currentGridX = newX;
+          currentGridY = newY;
+          positionError = 0.0;
+          snprintf(buf, 500, "POS,%.0f,%.0f,%.2f\n", currentGridX, currentGridY, positionError);
+        } else {
+          snprintf(buf, 500, "ERROR,Invalid SETPOS format\n");
+        }
+        
+      } else if (0 == strncmp(buf, "POLL_SENSORS", 12)) {
+        // Poll sensors
+        Serial.println("POLL_SENSORS command received");
+        struct sensors data;
+        readSensorData(data);
+        snprintf(buf, 500, "SENSORS,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", 
+                 data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], 
+                 data.newSonars[0], data.newSonars[1], data.ypr[0]);
+        
+      } else if (0 == strncmp(buf, "DISCONNECT", 10)) {
+        // Graceful disconnect
+        Serial.println("DISCONNECT command received");
+        snprintf(buf, 500, "OK,Disconnecting\n");
         client.write(buf);
-        Serial.print("Sending back: '");
-        Serial.print(buf);
-        Serial.println("'");
+        client.stop();
+        alreadyConnected = false;
+        return;
+        
+      } else {
+        // Unrecognized command
+        Serial.print("Unrecognized command: ");
+        Serial.println(buf);
+        snprintf(buf, 500, "ERROR,Unrecognized command\n");
       }
 
+      // Send response
+      client.write(buf);
+      Serial.print("Sending back: '");
+      Serial.print(buf);
+      Serial.println("'");
     }
-} //end loopM7
+  }
+} // end loopM7
 
+
+
+
+
+// Helper function: Move robot to grid position
+// Returns true if successful, false otherwise
+bool moveToGridPosition(float targetX, float targetY) {
+  Serial.print("Starting movement to grid position (");
+  Serial.print(targetX, 0);
+  Serial.print(", ");
+  Serial.print(targetY, 0);
+  Serial.println(")");
+  
+  // TODO: Implement your actual movement logic here
+  // This should:
+  // 1. Calculate the path from current position to target
+  // 2. Execute motor commands to follow the path
+  // 3. Use sensors to verify movement
+  // 4. Return true if target reached, false if failed
+  
+  // Example placeholder:
+  // float deltaX = targetX - currentGridX;
+  // float deltaY = targetY - currentGridY;
+  // executeMovement(deltaX, deltaY);
+  
+  // For now, just simulate successful movement
+  delay(100); // Simulate movement time
+  return true;
+}
+
+
+// Helper function: Calculate position error
+// Returns error metric (e.g., distance from expected position, angle error, etc.)
+float calculatePositionError(float targetX, float targetY) {
+  // TODO: Implement actual error calculation based on sensors
+  // This could be:
+  // - Distance between expected and actual position (using odometry)
+  // - Heading error
+  // - Wall distance discrepancies
+  // - Combination of multiple factors
+  
+  // Example placeholder using sensor data:
+  struct sensors data;
+  readSensorData(data);
+  
+  // Calculate error based on wall distances, heading, etc.
+  float error = 0.0;
+  
+  // Example: Use lidar/sonar readings to estimate position error
+  // error = calculateWallDistanceError(data);
+  
+  return error;
+}
+
+
+// Optional: Helper function to calculate error based on wall distances
+float calculateWallDistanceError(struct sensors data) {
+  // Example: Compare expected wall distances to actual sensor readings
+  // Return a metric of how far off the position estimate might be
+  
+  float expectedFrontDist = 50.0;  // cm, example
+  float actualFrontDist = data.lidars[0];
+  
+  float error = abs(expectedFrontDist - actualFrontDist) / 10.0;  // normalized
+  return error;
+}
 
 //setup function for both processors
 void setup() {

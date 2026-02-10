@@ -8,7 +8,37 @@
   This lab is about following walls and hallways, and driving to a goal avoiding obstacles.
 
   Key functions:
-  TODO: write key functions with short descriptions
+
+  setupM4(): sets up the m4 core that runs the sensor stuff
+  loopM4(): loops over the lidar and solar sensors and updates the appropriate stuff
+
+  read_sensors(): gets the current sensor data structure
+  readlidar(int index): gets the value of the corresponding lidar
+  readsonar(int index): gets the value of the corresponding sonar (old hardware)
+  readnewsonar(int index): gets the value of the correspondign sonar (new hardware)
+  
+  lidarTimeToDist(float t); gets distance from lidar pulse width
+  sonarTimeToDist(float t): gets distancwe from sonar pulse width (old hardware)
+  newsonarTimeToDist(float t): gets distancwe from sonar pulse width (new hardware)
+
+  initstepper() inits steppers
+  moveMotors(...) blocking move of motors
+  updateMotors() non blocking motor move uipdate
+
+  move(...) blocking movement function
+  moveVelo(...) non blocking movement
+  spin() blocking
+  forward() blocking
+  stop() stops robot
+  
+  printEncoderData() periodic printing of encoders
+  updateOdometry() periodic encoder update
+
+  collide() does collide logic
+  avoid() does avoid logic
+  follow() does follow logic
+
+  wallFollow() does wall follow logic
 
 
 

@@ -1,3 +1,10 @@
+/*
+Controller for following a wall or two
+
+clamp is a utility function
+calculate does the controller calculations
+
+*/
 #ifndef CONTROLLER_H
 #define CONTROLLER_H
 
