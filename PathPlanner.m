@@ -47,6 +47,10 @@ classdef PathPlanner
                 end
             end
 
+            if ~PathPlanner.contains(cellsExplored, targetx, targety)
+                    nodelist = [originX, originY]';
+                    return;
+            end
             %Recreate path
             path = cellsExplored(1:2, end);
             while true
