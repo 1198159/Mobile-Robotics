@@ -1368,6 +1368,9 @@ float targetXs[] = {-457.2, -914.4, -914.4};
 float targetYs[] = {0, 0, -457.2};
 int numMoves = 3;
 
+float realTargetX = 0;
+float realTargetY = 0;
+
 // M4 (coprocessor) 
 void loopM4() {
   readAllSensors();
@@ -1389,34 +1392,35 @@ void loopM4() {
     // if(true){
       // backwardsBetterGoToGoal(1000, 1000);
     // }
-    if(moveIndex==numMoves) {
-      moveVelo(0, 0); //stop
+    // if(moveIndex==numMoves) {
+    //   moveVelo(0, 0); //stop
       
-      digitalWrite(redLED, LOW);
-      digitalWrite(ylwLED, LOW);
-      digitalWrite(grnLED, LOW);
-      digitalWrite(bluLED, HIGH); 
-    } else {
-      // moveVelo(30, 0); //slow forward
-      // moveVelo(30, 0.0492126); //slow around circle of track
+    //   digitalWrite(redLED, LOW);
+    //   digitalWrite(ylwLED, LOW);
+    //   digitalWrite(grnLED, LOW);
+    //   digitalWrite(bluLED, HIGH); 
+    // } else {
+    //   // moveVelo(30, 0); //slow forward
+    //   // moveVelo(30, 0.0492126); //slow around circle of track
 
-      // wall follow with go to goal
-      float targetX = targetXs[moveIndex];
-      float targetY = targetYs[moveIndex];
-      if(!wallFollowAdjusted(sense, targetX, targetY)) {
-        // random wander if wall follow fails
-        // moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
+    //   // wall follow with go to goal
+    //   float targetX = targetXs[moveIndex];
+    //   float targetY = targetYs[moveIndex];
+    //   if(!wallFollowAdjusted(sense, targetX, targetY)) {
+    //     // random wander if wall follow fails
+    //     // moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
 
-        digitalWrite(redLED, LOW);
-        digitalWrite(ylwLED, LOW);
-        digitalWrite(grnLED, LOW);
-        digitalWrite(bluLED, LOW); 
+    //     digitalWrite(redLED, LOW);
+    //     digitalWrite(ylwLED, LOW);
+    //     digitalWrite(grnLED, LOW);
+    //     digitalWrite(bluLED, LOW); 
 
-        if(backwardsBetterGoToGoal(targetX, targetY)){
-          moveIndex++;
-        }
+    //     if(backwardsBetterGoToGoal(targetX, targetY)){
+    //       moveIndex++;
+    //     }
         
-      }
+    //   }
+      backwardsBetterGoToGoal(realTargetX, realTargetY);
 
 
       // go to angle
@@ -1438,7 +1442,7 @@ void loopM4() {
       // just follow
       // follow(0, 0, sense);
 
-    }
+    // }
 
     lastLoopTime = millis();
 
@@ -1611,6 +1615,10 @@ bool moveToGridPosition(float targetX, float targetY) {
   Serial.print(", ");
   Serial.print(targetY, 0);
   Serial.println(")");
+
+  realTargetX = (targetX - 1) * 457.2f;
+  realTargetY = (targetY - 1) * 457.2f;
+
   
   // TODO: Implement your actual movement logic here
   // This should:
@@ -1625,8 +1633,7 @@ bool moveToGridPosition(float targetX, float targetY) {
   // executeMovement(deltaX, deltaY);
   
   // For now, just simulate successful movement
-  delay(100); // Simulate movement time
-  return true;
+  return false;
 }
 
 
