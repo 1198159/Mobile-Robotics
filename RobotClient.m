@@ -19,7 +19,7 @@ classdef RobotClient
         function [obj, response] = connect(obj)
             % Find robot IP address
             [status, result] = system('arp -a');
-            pat = regexpPattern("192\.168\.137\.173");
+            pat = regexpPattern("192\.168\.137\.245");
             ipAddrArray = extract(result, pat);
             
             [r, c] = size(ipAddrArray);
