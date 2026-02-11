@@ -221,6 +221,22 @@ struct sensors {
   MSGPACK_DEFINE_ARRAY(lidars, sonars, newSonars, ypr);  //https://stackoverflow.com/questions/37322145/msgpack-to-pack-structures https://www.appsloveworld.com/cplus/100/391/msgpack-to-pack-structures
 } sense;
 
+
+struct odometry {
+  float currentX;
+  float currentY;
+  MSGPACK_DEFINE_ARRAY(currentX, currentY);
+} odo;
+
+
+struct targetPosition {
+  float currentX;
+  float currentY;
+  MSGPACK_DEFINE_ARRAY(currentX, currentY);
+} target;
+
+
+
 // when a sensor sucessfully reads, the corresponding sensor gets set to 0, each time it doesn't read it increments by one
 struct timesNoReadStruct {
   unsigned int lidars[numLidars];
@@ -230,9 +246,16 @@ struct timesNoReadStruct {
   // MSGPACK_DEFINE_ARRAY(lidar_front, lidar_back, lidar_left, lidar_right, sonar_left, sonar_right);
 } timesNoRead;
 
-// read_lidars is the function used to get lidar data to the M7
 struct sensors read_sensors() {
   return sense;
+}
+
+struct odometry read_odometry() {
+  return odo;
+}
+
+struct targetPosition read_target_position() {
+  return target;
 }
 
 // micros to some unit (maybe cm)
@@ -543,6 +566,14 @@ void readAllSensors() {
 // function for the m7 to call to get data from the m4
 void readSensorData(struct sensors& data) {
   data = RPC.call("read_sensors").as<struct sensors>();
+}
+
+void readOdometryData(struct odometry& data) {
+  data = RPC.call("read_odometry").as<struct odometry>();
+}
+
+void readTargetData(struct targetPosition& data) {
+  data = RPC.call("read_target_position").as<struct targetPosition>();
 }
 
 // function to print lidar, (old) sonar, and new sonar
