@@ -242,11 +242,16 @@ struct targetPosition {
 // co handles
 std::queue<targetPosition> queuedTargets{};
 
+
+bool reached = false;
 // co calls
 void reached_target() {
-  if(queuedTargets.size()>1) queuedTargets.pop(); //if there would be at least 1 thing left, remove something from the queue
+  if(queuedTargets.size()>1) {
+    queuedTargets.pop(); //if there would be at least 1 thing left, remove something from the queue
+  } else { //nothing left in queue
+    reached = true;
+  }
 }
-
 
 // when a sensor sucessfully reads, the corresponding sensor gets set to 0, each time it doesn't read it increments by one
 struct timesNoReadStruct {
@@ -268,11 +273,7 @@ struct odometry read_odometry() {
 }
 
 bool is_at_position(){
-  if(queuedTargets.empty()){
-    return true;
-  }if(queuedTargets.size() == 1){
-
-  }
+  return reached;
 }
 
 // relative to the most recently added target
@@ -1480,6 +1481,7 @@ void loopM4() {
     calculateGoToAngle(LOOP_TIME, targetang, sense.ypr[0], &angvel);
 
     if(toTravel>linthres){
+      reached = false;
       if(angvel>angvelthres || angvel<-angvelthres){ //ang moving not lin moving
         moveVelo(0, angvel);
       } else { //not ang moving but is lin moving
