@@ -267,6 +267,14 @@ struct odometry read_odometry() {
   return odo;
 }
 
+bool is_at_position(){
+  if(queuedTargets.empty()){
+    return true;
+  }if(queuedTargets.size() == 1){
+
+  }
+}
+
 // relative to the most recently added target
 void add_relative_target(struct targetPosition data){
   struct targetPosition mostRecent{0, 0};
@@ -609,6 +617,9 @@ void addAbsoluteTarget(struct targetPosition data) {
   RPC.call("add_absolute_target", data);
 }
 
+bool isAtPosition(){
+  return RPC.call("is_at_position").as<bool>();
+}
 
 // function to print lidar, (old) sonar, and new sonar
 void printSensorData(struct sensors& data) {
@@ -1428,7 +1439,7 @@ void setupM4() {
   RPC.bind("read_odometry", read_odometry);
   RPC.bind("add_relative_target", add_relative_target);
   RPC.bind("add_absolute_target", add_absolute_target);
-  
+  RPC.bind("is_at_position", is_at_position);
 
   // imu
   initImu(); //takes time
@@ -1556,6 +1567,9 @@ void loopM7() {
           Serial.println("  poll sensors");
           
           snprintf(outbuf, BUFSIZE, "%f,%f,%f,%f,%f,%f,%f\n", data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], data.newSonars[0], data.newSonars[1], data.ypr[0]);
+        } else if (0 == strncmp(buf, "atpos", 5)){
+          
+        
         } else if (0 == strncmp(buf, "moveto ", 7)) {
           // Move to a relative new target. Robot deals with how to rotate there.
           // Coordinates don't rotate with the robot.
