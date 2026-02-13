@@ -1541,7 +1541,7 @@ void loopM7() {
           struct sensors data;
           readSensorData(data); //can be problematic if the sensors struct changes. 
           // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
-          snprintf(outbuf, BUFSIZE, "%f, %f, %f, %f, %f, %f, %f\n", data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], data.newSonars[0], data.newSonars[1], data.ypr[0]);
+          snprintf(outbuf, BUFSIZE, "%f,%f,%f,%f,%f,%f,%f\n", data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], data.newSonars[0], data.newSonars[1], data.ypr[0]);
         } else if (0 == strncmp(buf, "moveto ", 7)) {
           // Move to a relative new target. Robot deals with how to rotate there.
           // Coordinates don't rotate with the robot.
