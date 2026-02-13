@@ -106,6 +106,7 @@ function nodelist = bfs(wallmap, originX, originY, targetx, targety)
             break;
         end
     end
+
     nodelist = fliplr(path);
 end
 
@@ -128,8 +129,6 @@ function previousCell = retraceRoute(cells, currentCell)
         end
     end
 end
-
-bfs(wallmap2, 3, 2, 1, 3)
 
 
 %function [overlaps, origins] = localizeBasedOnMap(wallMap, currentMap)

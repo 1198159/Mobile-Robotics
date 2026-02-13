@@ -44,5 +44,25 @@ classdef RobotMapUtils
                 output = output + newline;
             end
         end
+        function newMap = rotateWallMap90(wallmap)
+            newMap = zeros((width(wallmap) - 1) * 2 + 1, (height(wallmap) - 1)/2 + 1);
+            %Populate odd rows
+
+            for i = (1:2:height(newMap))
+                for j = 1:width(newMap) - 1
+                    newMap(i, j) = wallmap(2*j, width(wallmap) + 1 - (i + 1) / 2);
+                end
+            end
+            %Populate even rows
+            for i = 2:2:height(newMap)
+                for j = 1:width(newMap)
+                    newMap(i, j) = wallmap(2*j - 1 ,i / 2);
+                end
+            end
+
+        end
+        function newMap = newMap()
+            newMap = [2 0; 2 2; 2 0;]
+        end
     end
-end
+end 
