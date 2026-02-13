@@ -1570,8 +1570,8 @@ void loopM7() {
           
           snprintf(outbuf, BUFSIZE, "%f,%f,%f,%f,%f,%f,%f\n", data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], data.newSonars[0], data.newSonars[1], data.ypr[0]);
         } else if (0 == strncmp(buf, "atpos", 5)){
-          
-        
+          int atPos = isAtPosition();
+          snprintf(outbuf, BUFSIZE, "%d\n", atPos); //print as a number, 0 or 1
         } else if (0 == strncmp(buf, "moveto ", 7)) {
           // Move to a relative new target. Robot deals with how to rotate there.
           // Coordinates don't rotate with the robot.
