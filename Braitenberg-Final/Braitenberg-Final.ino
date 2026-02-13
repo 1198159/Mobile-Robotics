@@ -268,7 +268,12 @@ struct odometry read_odometry() {
 }
 
 void add_target(struct targetPosition data){
-  queuedTargets.push({data.x, data.y});
+  struct targetPosition mostRecent{0, 0};
+  if(!queuedTargets.empty())
+    mostRecent = queuedTargets.back(); //calculate the absolute coord using the most recent one
+  mostRecent.x+=data.x;
+  mostRecent.y+=data.y;
+  queuedTargets.push(mostRecent);
 }
 
 // co calls
@@ -591,7 +596,7 @@ void readOdometryData(struct odometry& data) {
   data = RPC.call("read_odometry").as<struct odometry>();
 }
 
-void addTarget(struct targetPosition& data) {
+void addTarget(struct targetPosition data) {
   RPC.call("add_target", data);
 }
 
@@ -1441,24 +1446,25 @@ void loopM4() {
 
     // matrix coord frame to berry coord frame
     float targetX = -target.y;
-    float targetY = -target.x;
+    float targetY = target.x;
 
     // go to angle
     float angvel=0;
     float angvelthres = 0.05;
     float linthres = 10;
-    float targetang = atan2(target.y-odo.currentY, target.x-odo.currentX);
+    float targetang = atan2(targetY-odo.currentY, targetX-odo.currentX);
+    float toTravel = hypot(targetY-odo.currentY, targetX-odo.currentX);
     calculateGoToAngle(LOOP_TIME, targetang, sense.ypr[0], &angvel);
-    if(angvel>angvelthres || angvel<-angvelthres){
-      moveVelo(0, angvel);
-    } else {
-      float toTravel = hypot(target.y-odo.currentY, target.x-odo.currentX);
-      if(toTravel>linthres){
-        moveVelo(MOVE_VEL, 0);
-      } else {
-        moveVelo(0, 0);
-        reached_target();
+
+    if(toTravel>linthres){
+      if(angvel>angvelthres || angvel<-angvelthres){ //ang moving not lin moving
+        moveVelo(0, angvel);
+      } else { //not ang moving but is lin moving
+        moveVelo(200, 0);
       }
+    } else { //not linear moving
+      moveVelo(0, 0);
+      reached_target();
     }
 
     lastLoopTime = millis();
@@ -1521,39 +1527,46 @@ void loopM7() {
     if (client.available() > 0) {
       Serial.print("Message received: '");
       char buf[BUFSIZE+1];
+      char outbuf[BUFSIZE+1];
       int r = client.read((uint8_t*)(&buf), BUFSIZE);
       buf[r] = '\0';
       Serial.print(buf);
       Serial.println("'");
+      char* pointer = buf;
 
-      // Parse command
-      if(0==strncmp(buf, "ps", 2)){ //if they send 'ps' for poll sensors
-        struct sensors data;
-        readSensorData(data); //can be problematic if the sensors struct changes. 
-        // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
-        snprintf(buf, BUFSIZE, "%f, %f, %f, %f, %f, %f, %f\n", data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], data.newSonars[0], data.newSonars[1], data.ypr[0]);
-      } else if (0 == strncmp(buf, "moveto ", 7)) {
-        // Move to a relative new target. Robot deals with how to rotate there.
-        // Coordinates don't rotate with the robot.
-        float x, y;
-        if (sscanf(buf, "moveto %f %f", &x, &y) == 2) { //if sscanf finds 2 values to fill
-          struct targetPosition mostRecent = queuedTargets.back(); //calculate the absolute coord using the most recent one
-          mostRecent.x+=x;
-          mostRecent.y+=y;
-          addTarget(mostRecent);
-          
-          snprintf(buf, BUFSIZE, "queued moveto target (%f, %f)\n", x, y);
-        } else {
-          snprintf(buf, BUFSIZE, "error: moveto didn't find 2 floats\n");
+      while(*pointer != '\0'){
+
+        // Parse command
+        if(0==strncmp(buf, "ps", 2)){ //if they send 'ps' for poll sensors
+          struct sensors data;
+          readSensorData(data); //can be problematic if the sensors struct changes. 
+          // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
+          snprintf(outbuf, BUFSIZE, "%f,%f,%f,%f,%f,%f,%f\n", data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], data.newSonars[0], data.newSonars[1], data.ypr[0]);
+        } else if (0 == strncmp(buf, "moveto ", 7)) {
+          // Move to a relative new target. Robot deals with how to rotate there.
+          // Coordinates don't rotate with the robot.
+          float x, y;
+          if (sscanf(buf, "moveto %f %f", &x, &y) == 2) { //if sscanf finds 2 values to fill
+            addTarget({x, y});
+
+            Serial.println("  queued");
+            snprintf(outbuf, BUFSIZE, "queued moveto target (%f, %f)\n", x, y);
+          } else {
+            snprintf(outbuf, BUFSIZE, "error: moveto didn't find 2 floats\n");
+          }
+        } else { //if they sent an unrecognized
+          snprintf(outbuf, BUFSIZE, "Unrecognized command num %d\n", numSendMessages++);
         }
-      } else { //if they sent an unrecognized
-        snprintf(buf, BUFSIZE, "Unrecognized command num %d\n", numSendMessages++);
+
+        char* f = std::find(pointer, buf+BUFSIZE, '\n'); //start point, end point, what to find
+        if(f==buf+BUFSIZE) break; //if didn't send \n at the end
+        pointer = f+1; //move 1 past the \n
       }
 
       // Send response
-      client.write(buf);
+      client.write(outbuf);
       Serial.print("Sending back: '");
-      Serial.print(buf);
+      Serial.print(outbuf);
       Serial.println("'");
     }
   }
