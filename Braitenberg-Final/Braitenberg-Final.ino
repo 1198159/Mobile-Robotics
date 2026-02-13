@@ -48,10 +48,14 @@
 */
 
 
+#include "RPC.h" //for other core
 
 // wifi
 #include <WiFi.h>
 #include <SPI.h>
+
+
+#include <queue>
 
 
 // wifi
@@ -65,7 +69,6 @@ WiFiServer server(23);
 #include "wallFollow.h"
 #include "goToAngleController.h"
 
-#include "RPC.h" //for other core
 
 // imu
 // #include <MPU6050.h> 
@@ -225,16 +228,24 @@ struct sensors {
 struct odometry {
   float currentX;
   float currentY;
-  MSGPACK_DEFINE_ARRAY(currentX, currentY);
+  float currentAngle; //would be just yaw
+  MSGPACK_DEFINE_ARRAY(currentX, currentY, currentAngle);
 } odo;
 
 
 struct targetPosition {
-  float currentX;
-  float currentY;
-  MSGPACK_DEFINE_ARRAY(currentX, currentY);
-} target;
+  float x;
+  float y;
+  MSGPACK_DEFINE_ARRAY(x, y);
+};
 
+// co handles
+std::queue<targetPosition> queuedTargets{};
+
+// co calls
+void reached_target() {
+  if(queuedTargets.size()>1) queuedTargets.pop(); //if there would be at least 1 thing left, remove something from the queue
+}
 
 
 // when a sensor sucessfully reads, the corresponding sensor gets set to 0, each time it doesn't read it increments by one
@@ -246,16 +257,24 @@ struct timesNoReadStruct {
   // MSGPACK_DEFINE_ARRAY(lidar_front, lidar_back, lidar_left, lidar_right, sonar_left, sonar_right);
 } timesNoRead;
 
+// rpc: main calls on co
 struct sensors read_sensors() {
   return sense;
 }
 
+// rpc: main calls on co
 struct odometry read_odometry() {
   return odo;
 }
 
-struct targetPosition read_target_position() {
-  return target;
+void add_target(struct targetPosition data){
+  queuedTargets.push({data.x, data.y});
+}
+
+// co calls
+struct targetPosition get_target_position() {
+  if(queuedTargets.empty()) return {0, 0}; //no movement if no queue
+  return queuedTargets.front(); //return the next thing (the one that would be removed with pop())
 }
 
 // micros to some unit (maybe cm)
@@ -572,9 +591,10 @@ void readOdometryData(struct odometry& data) {
   data = RPC.call("read_odometry").as<struct odometry>();
 }
 
-void readTargetData(struct targetPosition& data) {
-  data = RPC.call("read_target_position").as<struct targetPosition>();
+void addTarget(struct targetPosition& data) {
+  RPC.call("add_target", data);
 }
+
 
 // function to print lidar, (old) sonar, and new sonar
 void printSensorData(struct sensors& data) {
@@ -712,14 +732,13 @@ float stepsToRadians(float steps) {
 }
 
 
-float currentX=0; //mm, forward from where started
-float currentY=0; //mm, positive is left
-float currentAngle=0; //radians, positive is left
 long prevLeft=0;
 long prevRight=0;
 
-// uses motor ticks to update where the robot thinks it is
+// uses motor ticks and imu yaw to update where the robot thinks it is
 void updateOdometry() {
+  odo.currentAngle = sense.ypr[0];
+  
   long currentLeft = stepperLeft.currentPosition();
   long currentRight = stepperRight.currentPosition();
   float deltaLeft = currentLeft-prevLeft;
@@ -728,11 +747,11 @@ void updateOdometry() {
   prevRight=currentRight;
 
   float deltaDist = stepsToDistance(deltaLeft+deltaRight)/2;
-  float deltaAngle = stepsToRadians(deltaRight-deltaLeft)/2;
-  currentAngle+=deltaAngle;
+  // float deltaAngle = stepsToRadians(deltaRight-deltaLeft)/2;
+  // odo.currentAngle+=deltaAngle;
 
-  currentX+=deltaDist*cos(currentAngle);
-  currentY+=deltaDist*sin(currentAngle);
+  odo.currentX+=deltaDist*cos(odo.currentAngle);
+  odo.currentY+=deltaDist*sin(odo.currentAngle);
 }
 
 // function to print where the robot thinks it is
@@ -742,11 +761,11 @@ void printOdometry() {
     
     Serial.print("motor ticks odo: ");
     Serial.print("\tx: ");
-    Serial.print(currentX);
+    Serial.print(odo.currentX);
     Serial.print("\ty: ");
-    Serial.print(currentY);
+    Serial.print(odo.currentY);
     Serial.print("\ta: ");
-    Serial.println(currentAngle);
+    Serial.println(odo.currentAngle);
     timer = millis();
   }
 }
@@ -1198,8 +1217,8 @@ int sticky2 = 0;
 bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
 
   // printSensorData(data);
-  float deltaX = targetX-currentX;
-  float deltaY = targetY-currentY;
+  float deltaX = targetX-odo.currentX;
+  float deltaY = targetY-odo.currentY;
   float targetAngle = atan2(deltaY, deltaX);
   float targetMagnitude = hypot(deltaX, deltaY);
 
@@ -1244,7 +1263,7 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
   if(leftReading){
 
  
-    float a = targetAngle-currentAngle + PI;
+    float a = targetAngle-odo.currentAngle + PI;
     if(a<-PI) a+=PI*2;
     if(a>PI) a-=PI*2;
 
@@ -1267,7 +1286,7 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
   } else if(rightReading){
 
 
-    float a = targetAngle-currentAngle + PI;
+    float a = targetAngle-odo.currentAngle + PI;
     if(a<-PI) a+=PI*2;
     if(a>PI) a-=PI*2;
     // Serial.print("right: ");
@@ -1300,11 +1319,15 @@ bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
 }
 
 // Go to goal (driving forwards) taking odometry into account. goToGoal is relative coordinates, this is absolute coordinates.
+// Returns true if we reached the goal, false if not.
 bool betterGoToGoal(float targetX, float targetY){
-  float deltaX = targetX-currentX;
-  float deltaY = targetY-currentY;
+  float deltaX = targetX-odo.currentX;
+  float deltaY = targetY-odo.currentY;
   float targetAngle = atan2(deltaY, deltaX);
-  float deltaAngle = targetAngle-currentAngle;
+  float deltaAngle = targetAngle-odo.currentAngle;
+
+  if(deltaAngle<-PI) deltaAngle+=2*PI;
+  if(deltaAngle>PI) deltaAngle-=2*PI;
 
   float linvel=0;
   float angvel=0;
@@ -1329,11 +1352,11 @@ bool betterGoToGoal(float targetX, float targetY){
 
 // Same as betterGoToGoal except it drives backwards to the goal.
 bool backwardsBetterGoToGoal(float targetX, float targetY){
-  float deltaX = targetX-currentX;
-  float deltaY = targetY-currentY;
+  float deltaX = targetX-odo.currentX;
+  float deltaY = targetY-odo.currentY;
   float targetAngle = atan2(deltaY, deltaX)+PI;
   if(targetAngle>PI) targetAngle-=PI*2;
-  float deltaAngle = targetAngle-currentAngle;
+  float deltaAngle = targetAngle-odo.currentAngle;
 
   float linvel=0;
   float angvel=0;
@@ -1355,6 +1378,8 @@ bool backwardsBetterGoToGoal(float targetX, float targetY){
   // Serial.print(linvel);
   return linvel==0&&angvel==0;
 }
+
+
 
 boolean alreadyConnected = false;
 
@@ -1386,6 +1411,9 @@ void setupM4() {
 
   // set up to be sensor server
   RPC.bind("read_sensors", read_sensors);  // bind a method to return the sensor data all at once
+  RPC.bind("read_odometry", read_odometry);
+  RPC.bind("add_target", add_target);
+  
 
   // imu
   initImu(); //takes time
@@ -1405,78 +1433,35 @@ float realTargetY = 0;
 // M4 (coprocessor) 
 void loopM4() {
   readAllSensors();
+  readImuYPR();
   updateOdometry();
 
   if((millis() - lastLoopTime) >= LOOP_TIME){
+    struct targetPosition target = get_target_position();
 
-    readImuYPR();
-    // Serial.println(sense.ypr[0]); //print yaw
-    // printImuYPR();
+    // matrix coord frame to berry coord frame
+    float targetX = -target.y;
+    float targetY = -target.x;
 
-    // printSensorData(sense);
-    // printOdometry();
-
-    // Serial.println();
-    //  collide:
-    // collide(sense); //only using lidars for collide for now
-    // printCollideInfo();
-    // if(true){
-      // backwardsBetterGoToGoal(1000, 1000);
-    // }
-    // if(moveIndex==numMoves) {
-    //   moveVelo(0, 0); //stop
-      
-    //   digitalWrite(redLED, LOW);
-    //   digitalWrite(ylwLED, LOW);
-    //   digitalWrite(grnLED, LOW);
-    //   digitalWrite(bluLED, HIGH); 
-    // } else {
-    //   // moveVelo(30, 0); //slow forward
-    //   // moveVelo(30, 0.0492126); //slow around circle of track
-
-    //   // wall follow with go to goal
-    //   float targetX = targetXs[moveIndex];
-    //   float targetY = targetYs[moveIndex];
-    //   if(!wallFollowAdjusted(sense, targetX, targetY)) {
-    //     // random wander if wall follow fails
-    //     // moveVelo(alwaysForwardRandomWanderX()*-5, alwaysForwardRandomWanderY()/30);
-
-    //     digitalWrite(redLED, LOW);
-    //     digitalWrite(ylwLED, LOW);
-    //     digitalWrite(grnLED, LOW);
-    //     digitalWrite(bluLED, LOW); 
-
-    //     if(backwardsBetterGoToGoal(targetX, targetY)){
-    //       moveIndex++;
-    //     }
-        
-    //   }
-      backwardsBetterGoToGoal(realTargetX, realTargetY);
-
-
-      // go to angle
-      // float angvel=0;
-      // calculateGoToAngle(LOOP_TIME, PI, sense.ypr[0], &angvel);
-      // moveVelo(0, angvel);
-
-
-      // just avoid
-      // avoid(0, 0, sense);
-
-      // avoid with random wander
-      // avoid(alwaysForwardRandomWanderX(), alwaysForwardRandomWanderY(), sense);
-
-      // betterGoToGoal(0, 0);
-      // backwardsBetterGoToGoal(0, 0);
-
-
-      // just follow
-      // follow(0, 0, sense);
-
-    // }
+    // go to angle
+    float angvel=0;
+    float angvelthres = 0.05;
+    float linthres = 10;
+    float targetang = atan2(target.y-odo.currentY, target.x-odo.currentX);
+    calculateGoToAngle(LOOP_TIME, targetang, sense.ypr[0], &angvel);
+    if(angvel>angvelthres || angvel<-angvelthres){
+      moveVelo(0, angvel);
+    } else {
+      float toTravel = hypot(target.y-odo.currentY, target.x-odo.currentX);
+      if(toTravel>linthres){
+        moveVelo(MOVE_VEL, 0);
+      } else {
+        moveVelo(0, 0);
+        reached_target();
+      }
+    }
 
     lastLoopTime = millis();
-
   } //end if
 
   updateMotors();
@@ -1502,14 +1487,14 @@ void setupM7() {
 
 unsigned int numSendMessages = 0;
 
+#define BUFSIZE 500
+
 // M7 (main processor)
-
-// Global variables for robot state
-float currentGridX = 1.0;  // Current grid position X
-float currentGridY = 1.0;  // Current grid position Y
-float positionError = 0.0; // Position error metric
-
+// relative coords (world relative, doesn't rotate with robot), abs angles
+// absolute coords (world relative, doesn't rotate with robot) get queued up
+// coprocessor moves motors and tells main processor when it reaches a target
 void loopM7() {
+
   
   if(WiFi.status() == 5) {
     Serial.println("We got disconnected from the hotspot. Reconnecting");
@@ -1535,94 +1520,34 @@ void loopM7() {
     // read from client
     if (client.available() > 0) {
       Serial.print("Message received: '");
-      char buf[501];
-      int r = client.read((uint8_t*)(&buf), 500);
+      char buf[BUFSIZE+1];
+      int r = client.read((uint8_t*)(&buf), BUFSIZE);
       buf[r] = '\0';
       Serial.print(buf);
       Serial.println("'");
 
       // Parse command
-      if (0 == strncmp(buf, "CONNECT", 7)) {
-        // Connection handshake
-        snprintf(buf, 500, "POS,%.0f,%.0f,%.2f\n", currentGridX, currentGridY, positionError);
-        Serial.println("CONNECT command received");
-        
-      } else if (0 == strncmp(buf, "MOVETO,", 7)) {
-        // Move to absolute grid position
-        // Parse: MOVETO,X,Y
-        float targetX, targetY;
-        if (sscanf(buf + 7, "%f,%f", &targetX, &targetY) == 2) {
-          Serial.print("MOVETO command: target (");
-          Serial.print(targetX, 0);
-          Serial.print(", ");
-          Serial.print(targetY, 0);
-          Serial.println(")");
-          
-          // Execute movement
-          bool success = moveToGridPosition(targetX, targetY);
-          
-          if (success) {
-            // Update current position and calculate error
-            currentGridX = targetX;
-            currentGridY = targetY;
-            positionError = calculatePositionError(targetX, targetY);
-            
-            snprintf(buf, 500, "POS,%.0f,%.0f,%.2f\n", currentGridX, currentGridY, positionError);
-          } else {
-            snprintf(buf, 500, "ERROR,Movement failed\n");
-          }
-        } else {
-          snprintf(buf, 500, "ERROR,Invalid MOVETO format\n");
-        }
-        
-      } else if (0 == strncmp(buf, "GETPOS", 6)) {
-        // Return current position
-        Serial.println("GETPOS command received");
-        positionError = calculatePositionError(currentGridX, currentGridY);
-        snprintf(buf, 500, "POS,%.0f,%.0f,%.2f\n", currentGridX, currentGridY, positionError);
-        
-      } else if (0 == strncmp(buf, "SETPOS,", 7)) {
-        // Manually set position (calibration)
-        // Parse: SETPOS,X,Y
-        float newX, newY;
-        if (sscanf(buf + 7, "%f,%f", &newX, &newY) == 2) {
-          Serial.print("SETPOS command: setting position to (");
-          Serial.print(newX, 0);
-          Serial.print(", ");
-          Serial.print(newY, 0);
-          Serial.println(")");
-          
-          currentGridX = newX;
-          currentGridY = newY;
-          positionError = 0.0;
-          snprintf(buf, 500, "POS,%.0f,%.0f,%.2f\n", currentGridX, currentGridY, positionError);
-        } else {
-          snprintf(buf, 500, "ERROR,Invalid SETPOS format\n");
-        }
-        
-      } else if (0 == strncmp(buf, "POLL_SENSORS", 12)) {
-        // Poll sensors
-        Serial.println("POLL_SENSORS command received");
+      if(0==strncmp(buf, "ps", 2)){ //if they send 'ps' for poll sensors
         struct sensors data;
-        readSensorData(data);
-        snprintf(buf, 500, "SENSORS,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", 
-                 data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], 
-                 data.newSonars[0], data.newSonars[1], data.ypr[0]);
-        
-      } else if (0 == strncmp(buf, "DISCONNECT", 10)) {
-        // Graceful disconnect
-        Serial.println("DISCONNECT command received");
-        snprintf(buf, 500, "OK,Disconnecting\n");
-        client.write(buf);
-        client.stop();
-        alreadyConnected = false;
-        return;
-        
-      } else {
-        // Unrecognized command
-        Serial.print("Unrecognized command: ");
-        Serial.println(buf);
-        snprintf(buf, 500, "ERROR,Unrecognized command\n");
+        readSensorData(data); //can be problematic if the sensors struct changes. 
+        // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
+        snprintf(buf, BUFSIZE, "%f, %f, %f, %f, %f, %f, %f\n", data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], data.newSonars[0], data.newSonars[1], data.ypr[0]);
+      } else if (0 == strncmp(buf, "moveto ", 7)) {
+        // Move to a relative new target. Robot deals with how to rotate there.
+        // Coordinates don't rotate with the robot.
+        float x, y;
+        if (sscanf(buf, "moveto %f %f", &x, &y) == 2) { //if sscanf finds 2 values to fill
+          struct targetPosition mostRecent = queuedTargets.back(); //calculate the absolute coord using the most recent one
+          mostRecent.x+=x;
+          mostRecent.y+=y;
+          addTarget(mostRecent);
+          
+          snprintf(buf, BUFSIZE, "queued moveto target (%f, %f)\n", x, y);
+        } else {
+          snprintf(buf, BUFSIZE, "error: moveto didn't find 2 floats\n");
+        }
+      } else { //if they sent an unrecognized
+        snprintf(buf, BUFSIZE, "Unrecognized command num %d\n", numSendMessages++);
       }
 
       // Send response
@@ -1634,62 +1559,6 @@ void loopM7() {
   }
 } // end loopM7
 
-
-
-
-
-// Helper function: Move robot to grid position
-// Returns true if successful, false otherwise
-bool moveToGridPosition(float targetX, float targetY) {
-  Serial.print("Starting movement to grid position (");
-  Serial.print(targetX, 0);
-  Serial.print(", ");
-  Serial.print(targetY, 0);
-  Serial.println(")");
-
-  realTargetX = (targetX - 1) * 457.2f;
-  realTargetY = (targetY - 1) * 457.2f;
-
-  
-  // TODO: Implement your actual movement logic here
-  // This should:
-  // 1. Calculate the path from current position to target
-  // 2. Execute motor commands to follow the path
-  // 3. Use sensors to verify movement
-  // 4. Return true if target reached, false if failed
-  
-  // Example placeholder:
-  // float deltaX = targetX - currentGridX;
-  // float deltaY = targetY - currentGridY;
-  // executeMovement(deltaX, deltaY);
-  
-  // For now, just simulate successful movement
-  return false;
-}
-
-
-// Helper function: Calculate position error
-// Returns error metric (e.g., distance from expected position, angle error, etc.)
-float calculatePositionError(float targetX, float targetY) {
-  // TODO: Implement actual error calculation based on sensors
-  // This could be:
-  // - Distance between expected and actual position (using odometry)
-  // - Heading error
-  // - Wall distance discrepancies
-  // - Combination of multiple factors
-  
-  // Example placeholder using sensor data:
-  struct sensors data;
-  readSensorData(data);
-  
-  // Calculate error based on wall distances, heading, etc.
-  float error = 0.0;
-  
-  // Example: Use lidar/sonar readings to estimate position error
-  // error = calculateWallDistanceError(data);
-  
-  return error;
-}
 
 
 // Optional: Helper function to calculate error based on wall distances
