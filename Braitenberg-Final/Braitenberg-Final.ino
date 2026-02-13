@@ -267,13 +267,18 @@ struct odometry read_odometry() {
   return odo;
 }
 
-void add_target(struct targetPosition data){
+// relative to the most recently added target
+void add_relative_target(struct targetPosition data){
   struct targetPosition mostRecent{0, 0};
   if(!queuedTargets.empty())
     mostRecent = queuedTargets.back(); //calculate the absolute coord using the most recent one
   mostRecent.x+=data.x;
   mostRecent.y+=data.y;
   queuedTargets.push(mostRecent);
+}
+
+void add_absolute_target(struct targetPosition data){
+  queuedTargets.push(data);
 }
 
 // co calls
@@ -596,8 +601,12 @@ void readOdometryData(struct odometry& data) {
   data = RPC.call("read_odometry").as<struct odometry>();
 }
 
-void addTarget(struct targetPosition data) {
-  RPC.call("add_target", data);
+void addRelativeTarget(struct targetPosition data) {
+  RPC.call("add_relative_target", data);
+}
+
+void addAbsoluteTarget(struct targetPosition data) {
+  RPC.call("add_absolute_target", data);
 }
 
 
@@ -1417,7 +1426,8 @@ void setupM4() {
   // set up to be sensor server
   RPC.bind("read_sensors", read_sensors);  // bind a method to return the sensor data all at once
   RPC.bind("read_odometry", read_odometry);
-  RPC.bind("add_target", add_target);
+  RPC.bind("add_relative_target", add_relative_target);
+  RPC.bind("add_absolute_target", add_absolute_target);
   
 
   // imu
@@ -1438,10 +1448,12 @@ float realTargetY = 0;
 // M4 (coprocessor) 
 void loopM4() {
   readAllSensors();
-  readImuYPR();
-  updateOdometry();
+  
 
   if((millis() - lastLoopTime) >= LOOP_TIME){
+    readImuYPR();
+    updateOdometry();
+
     struct targetPosition target = get_target_position();
 
     // matrix coord frame to berry coord frame
@@ -1541,20 +1553,23 @@ void loopM7() {
           struct sensors data;
           readSensorData(data); //can be problematic if the sensors struct changes. 
           // If flash bad code that makes the red on board blink red, double press RST on the board to be able to flash again.
+          Serial.println("  poll sensors");
+          
           snprintf(outbuf, BUFSIZE, "%f,%f,%f,%f,%f,%f,%f\n", data.lidars[0], data.lidars[1], data.lidars[2], data.lidars[3], data.newSonars[0], data.newSonars[1], data.ypr[0]);
         } else if (0 == strncmp(buf, "moveto ", 7)) {
           // Move to a relative new target. Robot deals with how to rotate there.
           // Coordinates don't rotate with the robot.
           float x, y;
           if (sscanf(buf, "moveto %f %f", &x, &y) == 2) { //if sscanf finds 2 values to fill
-            addTarget({x, y});
+            addRelativeTarget({x, y});
 
-            Serial.println("  queued");
+            Serial.println("  queued moveto");
             snprintf(outbuf, BUFSIZE, "queued moveto target (%f, %f)\n", x, y);
           } else {
             snprintf(outbuf, BUFSIZE, "error: moveto didn't find 2 floats\n");
           }
         } else { //if they sent an unrecognized
+          Serial.println("  unrecognized");
           snprintf(outbuf, BUFSIZE, "Unrecognized command num %d\n", numSendMessages++);
         }
 

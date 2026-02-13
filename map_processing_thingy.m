@@ -181,7 +181,7 @@ if r==1
     %send a message
     fprintf("sending a message\n");clc
     
-    client.write("Super grate message to send to the robot becasue sending messages is cool")
+    client.write("psps")
     client.flush()
     fprintf("done sending a message\n");
     
