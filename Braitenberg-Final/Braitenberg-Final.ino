@@ -101,7 +101,7 @@ MultiStepper steppers;//create instance to control multiple steppers at the same
 
 #define stepperEnTrue false //variable for enabling stepper motor
 #define stepperEnFalse true //variable for disabling stepper motor
-#define max_speed 600 //maximum stepper motor speed. Prevent skipping ticks.
+#define max_speed 450 //maximum stepper motor speed. Prevent skipping ticks.
 #define max_accel 1000 //maximum motor acceleration
 
 int pauseTime = 2500;   //time before robot moves in ms
@@ -172,7 +172,7 @@ unsigned long lastRandomWanderTime = 0;
 #define LOOP_TIME 10 //how long the main processor waits between loops
 unsigned long lastLoopTime = 0;
 
-#define TIMES_NO_READ_THRES 10 // how many times a sensor needs to not read in order to set the distance to far away
+#define TIMES_NO_READ_THRES 3 // how many times a sensor needs to not read in order to set the distance to far away
 
 #define NO_READ_DIST 1000 // how far is far away when a sensor doesn't read
 
@@ -248,7 +248,8 @@ bool reached = false;
 void reached_target() {
   if(queuedTargets.size()>1) {
     queuedTargets.pop(); //if there would be at least 1 thing left, remove something from the queue
-  } else { //nothing left in queue
+  }
+  if(queuedTargets.size()<=1) {
     reached = true;
   }
 }
@@ -278,6 +279,7 @@ bool is_at_position(){
 
 // relative to the most recently added target
 void add_relative_target(struct targetPosition data){
+  reached = false;
   struct targetPosition mostRecent{0, 0};
   if(!queuedTargets.empty())
     mostRecent = queuedTargets.back(); //calculate the absolute coord using the most recent one
@@ -310,11 +312,13 @@ float sonarTimeToDist(float t){
 float newSonarTimeToDist(float t){
   return t/58;
 }
-
+float lidarVals[numLidars][5];
 // initializes the lidar for the index given
 void initLidar(int lidarIndex) {
   timesNoRead.lidars[lidarIndex] = TIMES_NO_READ_THRES;
   sense.lidars[lidarIndex] = NO_READ_DIST;
+  for(int i = 0; i < 5; i++)
+    lidarVals[lidarIndex][i] = 0;
 }
 
 // initializes the (old) sonar for the index given
@@ -418,20 +422,21 @@ void initAllSensors() {
     initNewSonar(i);
 }
 
-
 // Reads the lidar given the lidar index.
 void readLidar(int lidarIndex){
   int state = digitalRead(lidars[lidarIndex]);
   bool noRead = false;
+  float dist = 0;
+  bool readThisTime = false;
   if(lidarStates[lidarIndex] ^ state){ //xor: not the same
     if(state) {
       //now high: rising edge
       lidarRisingTimes[lidarIndex] = micros();
     } else {
       // falling edge
-      float dist = lidarTimeToDist(micros()-lidarRisingTimes[lidarIndex]);
+      dist = lidarTimeToDist(micros()-lidarRisingTimes[lidarIndex]);
       if(dist<LIDAR_FAR_THRESH && dist>0) {//temp: may break things. If distance read negative, say no read
-        sense.lidars[lidarIndex] = dist;
+        readThisTime = true;
         timesNoRead.lidars[lidarIndex] = 0;
       } else {
         noRead = true;
@@ -445,10 +450,40 @@ void readLidar(int lidarIndex){
 
   if(noRead) {
     if(timesNoRead.lidars[lidarIndex] == TIMES_NO_READ_THRES) {
-      sense.lidars[lidarIndex] = NO_READ_DIST;
+      dist = NO_READ_DIST;
+      readThisTime = true; //actually didn't read, but consider this a value
     } else {
       timesNoRead.lidars[lidarIndex]++;
     }
+  }
+
+  //majority vote
+  if(readThisTime) {
+    for(int i = 0; i < 4; i++){
+      lidarVals[lidarIndex][i] = lidarVals[lidarIndex][i+1]; 
+    }
+    lidarVals[lidarIndex][4] = dist;
+
+    int numWall = 0;
+    int numOpen = 0;
+    float wallSum = 0;
+    float openSum = 0;
+    for(int i = 0; i < 5; i++){
+      float val = lidarVals[lidarIndex][i];
+      if(val > 35){
+        openSum += val;
+        numOpen++;
+      } else {
+        wallSum += val;
+        numWall++;
+      }
+    }
+    if(numOpen > numWall){
+      sense.lidars[lidarIndex] = openSum / numOpen;
+    } else {
+      sense.lidars[lidarIndex] = wallSum / numWall;
+    }
+
   }
 
   lidarStates[lidarIndex] = state;
@@ -1032,6 +1067,7 @@ float getSensorPushY(struct sensors& data){
 
 void tryConnect() {
   // wifi
+  digitalWrite(redLED, true);
   if (WiFi.status() == WL_NO_MODULE) {
     Serial.println("Communication with WiFi module failed!");
     // don't continue
@@ -1063,6 +1099,7 @@ void tryConnect() {
     Serial.print("IP Address: ");
     Serial.println(ip);
     server.begin();
+    digitalWrite(redLED, false);
   }
 }
 
@@ -1474,23 +1511,29 @@ void loopM4() {
 
     // go to angle
     float angvel=0;
-    float angvelthres = 0.05;
+    float angvelthres = 0.025;
     float linthres = 10;
     float targetang = atan2(targetY-odo.currentY, targetX-odo.currentX);
     float toTravel = hypot(targetY-odo.currentY, targetX-odo.currentX);
     calculateGoToAngle(LOOP_TIME, targetang, sense.ypr[0], &angvel);
 
-    if(toTravel>linthres){
-      reached = false;
-      if(angvel>angvelthres || angvel<-angvelthres){ //ang moving not lin moving
-        moveVelo(0, angvel);
-      } else { //not ang moving but is lin moving
-        moveVelo(200, 0);
+    if(reached && queuedTargets.size()<=1){ //if queuedTargets gets to 2, no longer stay in place
+      moveVelo(0, 0); //we reached once, don't move anymore
+    } else {
+      if(toTravel>linthres){
+        reached = false;
+        if(angvel>angvelthres || angvel<-angvelthres){ //ang moving not lin moving
+          moveVelo(0, angvel);
+        } else { //not ang moving but is lin moving
+          moveVelo(200, 0);
+        }
+      } else { //not linear moving
+        moveVelo(0, 0);
+        reached_target();
       }
-    } else { //not linear moving
-      moveVelo(0, 0);
-      reached_target();
     }
+
+    digitalWrite(bluLED, reached);
 
     lastLoopTime = millis();
   } //end if
@@ -1532,8 +1575,11 @@ void loopM7() {
     tryConnect();
   }
 
-  if(!alreadyConnected)
+  if(!alreadyConnected){
     client = server.accept(); // not blocking
+    digitalWrite(ylwLED, HIGH); //yellow: wifi but no client
+    digitalWrite(grnLED, LOW);
+  }
 
   if (client) {
     if (!alreadyConnected) {
@@ -1541,6 +1587,8 @@ void loopM7() {
       client.flush();
       Serial.println("We have a new client");
       alreadyConnected = true;
+      digitalWrite(grnLED, HIGH); //green: wifi and client
+      digitalWrite(ylwLED, LOW);
     }
 
     if(!client.connected()) {
