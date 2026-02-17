@@ -240,17 +240,14 @@ struct targetPosition {
 };
 
 // co handles
-std::queue<targetPosition> queuedTargets{};
+std::queue<struct targetPosition> queuedTargets{}; //is now allowed to be empty
+struct targetPosition mostRecentForRelativePurposes{0, 0};
 
-
-bool reached = false;
 // co calls
 void reached_target() {
-  if(queuedTargets.size()>1) {
-    queuedTargets.pop(); //if there would be at least 1 thing left, remove something from the queue
-  }
-  if(queuedTargets.size()<=1) {
-    reached = true;
+  // remove if there is something to remove
+  if(!queuedTargets.empty()) {
+    queuedTargets.pop();
   }
 }
 
@@ -274,27 +271,24 @@ struct odometry read_odometry() {
 }
 
 bool is_at_position(){
-  return reached;
+  return queuedTargets.empty();
 }
 
 // relative to the most recently added target
 void add_relative_target(struct targetPosition data){
-  reached = false;
-  struct targetPosition mostRecent{0, 0};
-  if(!queuedTargets.empty())
-    mostRecent = queuedTargets.back(); //calculate the absolute coord using the most recent one
-  mostRecent.x+=data.x;
-  mostRecent.y+=data.y;
-  queuedTargets.push(mostRecent);
+  mostRecentForRelativePurposes.x+=data.x;
+  mostRecentForRelativePurposes.y+=data.y;
+  queuedTargets.push(mostRecentForRelativePurposes);
 }
 
 void add_absolute_target(struct targetPosition data){
+  mostRecentForRelativePurposes = data;
   queuedTargets.push(data);
 }
 
 // co calls
 struct targetPosition get_target_position() {
-  if(queuedTargets.empty()) return {0, 0}; //no movement if no queue
+  if(queuedTargets.empty()) return mostRecentForRelativePurposes; //no movement if no queue
   return queuedTargets.front(); //return the next thing (the one that would be removed with pop())
 }
 
@@ -1503,7 +1497,7 @@ void loopM4() {
     readImuYPR();
     updateOdometry();
 
-    struct targetPosition target = get_target_position();
+    struct targetPosition target = get_target_position(); //even if the queue is empty, this will give a good result
 
     // matrix coord frame to berry coord frame
     float targetX = -target.y;
@@ -1517,11 +1511,10 @@ void loopM4() {
     float toTravel = hypot(targetY-odo.currentY, targetX-odo.currentX);
     calculateGoToAngle(LOOP_TIME, targetang, sense.ypr[0], &angvel);
 
-    if(reached && queuedTargets.size()<=1){ //if queuedTargets gets to 2, no longer stay in place
-      moveVelo(0, 0); //we reached once, don't move anymore
+    if(queuedTargets.empty()){
+      moveVelo(0, 0); //no where to move
     } else {
       if(toTravel>linthres){
-        reached = false;
         if(angvel>angvelthres || angvel<-angvelthres){ //ang moving not lin moving
           moveVelo(0, angvel);
         } else { //not ang moving but is lin moving
@@ -1533,7 +1526,7 @@ void loopM4() {
       }
     }
 
-    digitalWrite(bluLED, reached);
+    digitalWrite(bluLED, queuedTargets.empty());
 
     lastLoopTime = millis();
   } //end if
