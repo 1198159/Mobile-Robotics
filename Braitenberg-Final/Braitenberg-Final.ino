@@ -5,7 +5,10 @@
   Alex Yim
   2/3/26
 
-  This lab is about following walls and hallways, and driving to a goal avoiding obstacles.
+  This lab is about navigating occupancy-grid and adjacency-map worlds.
+  Most of the processing is done in MatLab, with the robot doing
+  wifi communications, sending sensor data and receiving target
+  positions.
 
   Key functions:
   TODO: write key functions with short descriptions
@@ -54,13 +57,14 @@
 #include <WiFi.h>
 #include <SPI.h>
 
-
+// for queuing up move targets
 #include <queue>
 
 
 // wifi
 WiFiServer server(23);
-
+boolean alreadyConnected = false;
+WiFiClient client;
 
 //include all necessary libraries
 #include <Arduino.h>//include for PlatformIO Ide
@@ -71,7 +75,6 @@ WiFiServer server(23);
 
 
 // imu
-// #include <MPU6050.h> 
 #include <I2Cdev.h>
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
     #include "Wire.h"
@@ -146,6 +149,8 @@ unsigned long lidarRisingTimes[numLidars] = {0, 0, 0, 0};
 #define lidarDisconnectTimeout 40000
 uint8_t lidarStates[numLidars] = {0, 0, 0, 0}; //either 0 (low) or 1 (high)
 #define LIDAR_FAR_THRESH 60
+#define MAJORITY_SIZE 5
+float lidarVals[numLidars][MAJORITY_SIZE]; //for majority vote if there is a wall
 
 #define numSonars 2
 int sonars[numSonars] = {leftSnr, rightSnr};
@@ -203,8 +208,6 @@ bool collideWantsToStop = false;
 
 // imu
 MPU6050 accelgyro;
-// int16_t ax, ay, az;
-// int16_t gx, gy, gz;
 bool DMPReady = false;  // Set true if DMP init was successful
 uint8_t MPUIntStatus;   // Holds actual interrupt status byte from MPU
 uint8_t devStatus;      // Return status after each device operation (0 = success, !0 = error)
@@ -212,7 +215,6 @@ uint16_t packetSize;    // Expected DMP packet size (default is 42 bytes)
 uint8_t FIFOBuffer[64]; // FIFO storage buffer
 VectorFloat gravity;    // [x, y, z]            Gravity vector
 Quaternion q;           // [w, x, y, z]         Quaternion container
-//float ypr[3];           // [yaw, pitch, roll]   Yaw/Pitch/Roll container and gravity vector
 
 // struct for all sensor readings
 struct sensors {
@@ -224,7 +226,7 @@ struct sensors {
   MSGPACK_DEFINE_ARRAY(lidars, sonars, newSonars, ypr);  //https://stackoverflow.com/questions/37322145/msgpack-to-pack-structures https://www.appsloveworld.com/cplus/100/391/msgpack-to-pack-structures
 } sense;
 
-
+// coprocessor fills this
 struct odometry {
   float currentX;
   float currentY;
@@ -232,7 +234,7 @@ struct odometry {
   MSGPACK_DEFINE_ARRAY(currentX, currentY, currentAngle);
 } odo;
 
-
+// gets stored in a queue
 struct targetPosition {
   float x;
   float y;
@@ -270,6 +272,7 @@ struct odometry read_odometry() {
   return odo;
 }
 
+// rpc: main calls on co
 bool is_at_position(){
   return queuedTargets.empty();
 }
@@ -279,11 +282,6 @@ void add_relative_target(struct targetPosition data){
   mostRecentForRelativePurposes.x+=data.x;
   mostRecentForRelativePurposes.y+=data.y;
   queuedTargets.push(mostRecentForRelativePurposes);
-}
-
-void add_absolute_target(struct targetPosition data){
-  mostRecentForRelativePurposes = data;
-  queuedTargets.push(data);
 }
 
 // co calls
@@ -306,12 +304,12 @@ float sonarTimeToDist(float t){
 float newSonarTimeToDist(float t){
   return t/58;
 }
-float lidarVals[numLidars][5];
+
 // initializes the lidar for the index given
 void initLidar(int lidarIndex) {
   timesNoRead.lidars[lidarIndex] = TIMES_NO_READ_THRES;
   sense.lidars[lidarIndex] = NO_READ_DIST;
-  for(int i = 0; i < 5; i++)
+  for(int i = 0; i < MAJORITY_SIZE; i++)
     lidarVals[lidarIndex][i] = 0;
 }
 
@@ -342,16 +340,11 @@ void initImu() {
 
   accelgyro.initialize();
 
-  // Serial.println(F("Testing MPU6050 connection..."));
   if(accelgyro.testConnection() == false){
     Serial.println("MPU6050 connection failed");
-    // while(true);
   }
   else {
-    // Serial.println("MPU6050 connection successful");
-
       /* Initializate and configure the DMP*/
-    // Serial.println(F("Initializing DMP..."));
     devStatus = accelgyro.dmpInitialize();
 
     /* Supply your gyro offsets here, scaled for min sensitivity */
@@ -366,15 +359,11 @@ void initImu() {
     if (devStatus == 0) {
       accelgyro.CalibrateAccel(6);  // Calibration Time: generate offsets and calibrate our MPU6050
       accelgyro.CalibrateGyro(6);
-      // Serial.println("These are the Active offsets: ");
-      // accelgyro.PrintActiveOffsets();
-      // Serial.println(F("Enabling DMP..."));   //Turning ON DMP
       accelgyro.setDMPEnabled(true);
 
       MPUIntStatus = accelgyro.getIntStatus();
 
       /* Set the DMP Ready flag so the main loop() function knows it is okay to use it */
-      // Serial.println(F("DMP ready! Waiting for first interrupt..."));
       DMPReady = true;
       packetSize = accelgyro.dmpGetFIFOPacketSize(); //Get expected DMP packet size for later comparison
     }
@@ -453,7 +442,7 @@ void readLidar(int lidarIndex){
 
   //majority vote
   if(readThisTime) {
-    for(int i = 0; i < 4; i++){
+    for(int i = 0; i < MAJORITY_SIZE-1; i++){
       lidarVals[lidarIndex][i] = lidarVals[lidarIndex][i+1]; 
     }
     lidarVals[lidarIndex][4] = dist;
@@ -462,9 +451,9 @@ void readLidar(int lidarIndex){
     int numOpen = 0;
     float wallSum = 0;
     float openSum = 0;
-    for(int i = 0; i < 5; i++){
+    for(int i = 0; i < MAJORITY_SIZE; i++){
       float val = lidarVals[lidarIndex][i];
-      if(val > 35){
+      if(val > 35){ //WALL_DETECTION_THRESH
         openSum += val;
         numOpen++;
       } else {
@@ -609,24 +598,14 @@ void readAllSensors() {
     readLidar(lidarIndex);
   }
 
-
   // the sonars can interfere with eachother, so they can't be read at the same time
   // static bool isOnNewSonar=true; //goes back and forth between old and new sonar
 
   static int m4SonarIndex=0;
-  // if(isOnNewSonar){
-    if(readNewSonar(m4SonarIndex)) m4SonarIndex++;
-    if(m4SonarIndex==numNewSonars) {
-      m4SonarIndex=0;
-      // isOnNewSonar=false;
-    }
-  // } else {
-  //   if(readSonar(m4SonarIndex)) m4SonarIndex++;
-  //   if(m4SonarIndex==numSonars) {
-  //     m4SonarIndex=0;
-  //     isOnNewSonar=true;
-  //   }
-  // }
+  if(readNewSonar(m4SonarIndex)) m4SonarIndex++;
+  if(m4SonarIndex==numNewSonars) {
+    m4SonarIndex=0;
+  }
 }
 
 
@@ -641,10 +620,6 @@ void readOdometryData(struct odometry& data) {
 
 void addRelativeTarget(struct targetPosition data) {
   RPC.call("add_relative_target", data);
-}
-
-void addAbsoluteTarget(struct targetPosition data) {
-  RPC.call("add_absolute_target", data);
 }
 
 bool isAtPosition(){
@@ -684,13 +659,6 @@ void LwheelSpeed() { encoder[LEFT] ++;  //count the left wheel encoder interrupt
 
 //interrupt function to count right encoder ticks
 void RwheelSpeed() { encoder[RIGHT] ++; //count the right wheel encoder interrupts
-}
-
-// turns off all 4 leds: red, yellow, green, blue
-void allOFF(){
-  for (int l : leds)
-    digitalWrite(l,LOW);
-  
 }
 
 //function to set all stepper motor variables, outputs and LEDs
@@ -894,168 +862,16 @@ void moveVelo(float linvel, float angvel){
 
   // digitalWrite(stepperEnable, linvel==0 && angvel==0);//turns off the stepper motor driver to stop the terrible whining noise when not trying to move
 
-  //add linear and angular distances and convert to motor steps
-  // float steps1 = distanceToSteps(lindist) - radiansToSteps(angdist);
-  // float steps2 = distanceToSteps(lindist) + radiansToSteps(angdist);
-  //Slow down the faster move so they (linear and rotational moves) finish at the same time
-  //skip velocity scaling if either distance is 0
-  // if(lindist!=0 && angdist!=0){ //If one speed is 0 don't scale to avoid divide by 0
-  //   linvel = closestto0(linvel, lindist / (angdist / angvel));
-  //   angvel = closestto0(angvel, angdist / (lindist / linvel));
-  // }
-  
   //add linear and angular speeds and convert to motor steps
   float speed1 = clamp(distanceToSteps(linvel) - radiansToSteps(angvel), pastSpeed1 - MAX_SPEED_DELTA, pastSpeed1 + MAX_SPEED_DELTA);
   float speed2 = clamp(distanceToSteps(linvel) + radiansToSteps(angvel), pastSpeed2 - MAX_SPEED_DELTA, pastSpeed2 + MAX_SPEED_DELTA);
 
   pastSpeed1 = speed1;
   pastSpeed2 = speed2;
-  // moveMotors(steps1, speed1, steps2, speed2);
   stepperLeft.setSpeed(speed1);//set left motor speed
   stepperRight.setSpeed(speed2);//set right motor speed
-  
-
 }
 
-/*
-  Spins in place, turnRadians amount.
-  Both mostors spin, opposite directions. No linear distance is traveled
-  Positive is counterclockwise
-  Blocks until motors are done moving.
-*/
-void spin(float turnRadians) {
-  move(0, turnRadians);
-}
-
-/*
-  Moves the robot forward, distanceMM milimeters.
-  Blocks until motors are done moving.
-*/
-void forward(float distanceMM) {
-  move(distanceMM, 0);
-}
-
-/*
-  Stops the movement of the robot.
-*/
-void stop() {
-  moveMotors(0,0,0,0);
-}
-
-// gets a random float, used in random wander
-float randFloat(float low, float high){
-  return random(low*RAND_FLOAT_STEP_WIDTH, high*RAND_FLOAT_STEP_WIDTH) * 1.0f / RAND_FLOAT_STEP_WIDTH;
-}
-
-// sets the random wander leds (green on)
-void setRandomWanderLedsOn() {
-  digitalWrite(grnLED, HIGH);
-}
-
-// sets the collide leds (red on, yellow and green off)
-void setCollideLedsOn() {
-  digitalWrite(redLED, HIGH);
-  digitalWrite(ylwLED, LOW);
-  digitalWrite(grnLED, LOW);
-}
-// un-sets the collide leds (red off)
-void setCollideLedsOff() {
-  digitalWrite(redLED, LOW);
-}
-
-// sets the avoid leds (yellow on)
-void setAvoidLedsOn() {
-  digitalWrite(ylwLED, HIGH);
-}
-// un-sets the avoid leds (yellow off)
-void setAvoidLedsOff() {
-  digitalWrite(ylwLED, LOW);
-}
-// sets the follow leds (yellow and green on)
-void setFollowLedsOn() {
-  digitalWrite(ylwLED, HIGH);
-  digitalWrite(grnLED, HIGH);
-}
-// un-sets the follow leds (yellow and green off)
-void setFollowLedsOff() {
-  digitalWrite(ylwLED, LOW);
-  digitalWrite(grnLED, LOW);
-}
-
-// gets the y component of always forward random wander. This varies
-float alwaysForwardRandomWanderY() {
-  setRandomWanderLedsOn();
-  static float y = 0;
-  if((millis() - lastRandomWanderTime) >= RANDOM_WANDER_TIME){
-    y = randFloat(-MOVE_VEL, MOVE_VEL);
-
-    lastRandomWanderTime = millis();
-  }
-  return y*RANDOM_WANDER_SCALE;
-}
-
-// gets the x component of always forward random wander. This doesn't vary (because always forward)
-float alwaysForwardRandomWanderX() {
-  setRandomWanderLedsOn();
-  return MOVE_VEL*RANDOM_WANDER_SCALE; //always forward
-}
-
-// if the sensors say something is close, sets collideSaysToStop to true
-// currently only using lidars because sonars don't work well for this (for some reason)
-void collide(struct sensors& data){
-  float m = min(data.lidars[0], min(data.lidars[1], min(data.lidars[2], data.lidars[3])));
-  if(collideWantsToStop){
-    collideWantsToStop=m<COLLIDE_OFF_THRES;
-    if(millis()-collideTime<COLLIDE_AUTO_OFF_TIME){
-      // on for an amount of time
-      collideSaysToStop = true;
-    } else if(millis()-collideTime<COLLIDE_AUTO_OUT_TIME) {
-      // off for an amount of time
-      collideSaysToStop = false;
-      digitalWrite(bluLED, HIGH); //but still complain
-    } else {
-      // back on again. Stop if we think we are colliding the entire time, it probably won't get better
-      collideSaysToStop = true;
-    }
-  } else {
-    collideWantsToStop=m<COLLIDE_ON_THRES;
-    collideTime=millis();
-    collideSaysToStop = false;
-    digitalWrite(bluLED, LOW);
-  }
-
-
-  if(collideSaysToStop){
-    setCollideLedsOn();
-  } else {
-    setCollideLedsOff();
-  }
-}
-
-// prints if collide says to stop
-void printCollideInfo() {
-  Serial.print(collideSaysToStop?"   is":"isn't");
-  Serial.print(" colliding");
-  Serial.print("\t   |\t");
-}
-
-// x is forward and backward
-float getSensorPushX(struct sensors& data){
-  float x = 0;
-  if(data.lidars[0]<SENSOR_PUSH_LIDAR_CUTOFF_DIST) x-=SENSOR_PUSH_LIDAR_IDEAL_DIST-data.lidars[0];
-  if(data.lidars[1]<SENSOR_PUSH_LIDAR_CUTOFF_DIST) x+=SENSOR_PUSH_LIDAR_IDEAL_DIST-data.lidars[1];
-  
-  return x*SENSOR_PUSH_SCALE;
-}
-
-// y is left and right
-float getSensorPushY(struct sensors& data){
-  float y = 0;
-  if(data.lidars[2]<SENSOR_PUSH_LIDAR_CUTOFF_DIST) y+=SENSOR_PUSH_LIDAR_IDEAL_DIST-data.lidars[2];
-  if(data.lidars[3]<SENSOR_PUSH_LIDAR_CUTOFF_DIST) y-=SENSOR_PUSH_LIDAR_IDEAL_DIST-data.lidars[3];
-  
-  return y*SENSOR_PUSH_SCALE;
-}
 
 
 
@@ -1099,348 +915,8 @@ void tryConnect() {
 
 
 
-// takes a base x and y to go to, changes it for avoiding obstacles
-void avoid(float x, float y, struct sensors& data) {
-  float sensorX = getSensorPushX(data);
-  float sensorY = getSensorPushY(data);
-  x+=sensorX;
-  y+=sensorY;
-  if(sensorX!=0 || sensorY!=0) setAvoidLedsOn();
-  else setAvoidLedsOff();
 
-  float angvel = -atan2(y, x);
 
-  float ang = angvel;
-  float angClamped = angvel;
-  if(ang>NINETY_DEGREES) angClamped=NINETY_DEGREES;
-  if(ang<-NINETY_DEGREES) angClamped=-NINETY_DEGREES;
-
-  if(angvel>ROT_VEL) angvel = ROT_VEL;
-  if(angvel<-ROT_VEL) angvel = -ROT_VEL;
-
-  float linvel = x*AVOID_LINVEL_SCALE*cos(angClamped);
-  if(linvel>MOVE_VEL) linvel=MOVE_VEL;
-  if(linvel<-MOVE_VEL) linvel=-MOVE_VEL;
-
-  // m from collide
-  float m = min(data.lidars[0], min(data.lidars[1], min(data.lidars[2], data.lidars[3])));
-
-  // edge case detection: wall in front and back, turn 90
-  if(data.lidars[0]<AVOID_SPECIAL_CASE_THRESH && data.lidars[1]<AVOID_SPECIAL_CASE_THRESH && data.lidars[2]>AVOID_SPECIAL_CASE_THRESH && data.lidars[3]>AVOID_SPECIAL_CASE_THRESH){
-    spin(NINETY_DEGREES);
-    delay(AVOID_SPECIAL_CASE_WAIT_TIME_LONG);
-    return;
-  }
-  
-  // edge case detection: wall left and right: forward
-  if(data.lidars[2]<AVOID_SPECIAL_CASE_THRESH && data.lidars[3]<AVOID_SPECIAL_CASE_THRESH && data.lidars[1]>AVOID_SPECIAL_CASE_THRESH && data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
-    forward(AVOID_SPECIAL_CASE_WAIT_TIME_SHORT);
-    return;
-  }
-
-  // edge case detection: wall everywhere, give up
-  if(data.lidars[0]<AVOID_SPECIAL_CASE_THRESH && data.lidars[1]<AVOID_SPECIAL_CASE_THRESH && data.lidars[2]<AVOID_SPECIAL_CASE_THRESH && data.lidars[3]<AVOID_SPECIAL_CASE_THRESH){
-    stop();
-    delay(AVOID_SPECIAL_CASE_WAIT_TIME_LONG);
-    return;
-  }
-
-  // if it wants to turn a little or it is far away, allow movement
-  if(abs(ang)<AVOID_SPECIAL_CASE_ANGLE_THRESH || data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
-    moveVelo(linvel, angvel);
-  } else {
-    // spin in place, ignoring other stuff
-    spin(ang);
-  }
-}
-
-// moves around to follow a moving obstacle
-void follow(float x, float y, struct sensors& data) {
-  float sensorX = getSensorPushX(data);
-  float sensorY = getSensorPushY(data);
-  x-=sensorX;
-  y+=sensorY;
-  if(sensorX!=0 || sensorY!=0) setFollowLedsOn();
-  else setFollowLedsOff();
-
-  float sonarDiff = 0;
-  float sonarSum = 0;
-  int countSonars = 0;
-  if(data.newSonars[0]<SENSOR_PUSH_SONAR_CUTOFF_DIST) {
-    sonarDiff-=SENSOR_PUSH_SONAR_IDEAL_DIST-data.newSonars[0];
-    sonarSum+=SENSOR_PUSH_SONAR_IDEAL_DIST-data.newSonars[0];
-    countSonars++;
-  }
-  if(data.newSonars[1]<SENSOR_PUSH_SONAR_CUTOFF_DIST) {
-    sonarDiff+=SENSOR_PUSH_SONAR_IDEAL_DIST-data.newSonars[1];
-    sonarSum+=SENSOR_PUSH_SONAR_IDEAL_DIST-data.newSonars[1];
-    countSonars++;
-  }
-
-  y-=sonarDiff*SONAR_DIFF_SCALE;
-  
-
-  // float angvel = x>0? -y : y;
-
-  float linvel = (followDist-sonarSum/2)*SONAR_SUM_SCALE;
-  if(countSonars<numNewSonars) linvel=0;
-  if(linvel>MOVE_VEL) linvel=MOVE_VEL;
-  if(linvel<-MOVE_VEL) linvel=-MOVE_VEL;
-
-  float angvel = atan2(y, x);
-
-  float ang = angvel;
-  if(angvel>ROT_VEL) angvel = ROT_VEL;
-  if(angvel<-ROT_VEL) angvel = -ROT_VEL;
-
-  // if it wants to turn a little or it is far away, allow movement
-  if(abs(ang)<AVOID_SPECIAL_CASE_ANGLE_THRESH || data.lidars[0]>AVOID_SPECIAL_CASE_THRESH){
-    moveVelo(linvel, angvel);
-  } else {
-    // spin in place, ignoring other stuff
-    spin(ang);
-  }  
-}
-
-float spinCount = 0;
-#define SPIN_AMT 70
-
-
-// Follows (drives along) a wall. Returns true if there is a wall the robot is now following, false if there is nothing to follow.
-bool wallFollow(struct sensors& data){
-
-  bool leftReading=data.lidars[2] < 50;
-  bool rightReading=data.lidars[3] < 50;
-  bool backReading=data.lidars[1] < 5; //driving backwards, so if we are about to go forward into something
-
-  float linvel=0;
-  float angvel=0;
-
-  if(spinCount > 0){
-    spinCount--;
-    angvel = ROT_VEL;
-  } else if(spinCount < 0){
-    spinCount++;
-    angvel = -ROT_VEL;
-  } else if(leftReading&&rightReading){
-    calculate(LOOP_TIME, data.lidars[3]*10 - data.lidars[2]*10, 0, &linvel, &angvel);
-    // red yellow and green
-    digitalWrite(redLED, HIGH);
-    digitalWrite(ylwLED, HIGH);
-    digitalWrite(grnLED, HIGH);
-
-    // turn around
-    if(backReading) spinCount = 30; 
-  } else if(leftReading){
-    // only left reading
-    calculate(LOOP_TIME, targetDistance-data.lidars[2]*10, 0, &linvel, &angvel);
-    // yellow and green
-    digitalWrite(redLED, LOW);
-    digitalWrite(ylwLED, HIGH);
-    digitalWrite(grnLED, HIGH);
-
-    // turn 90
-    if(backReading) spinCount = 15; 
-  } else if(rightReading){
-    // only right
-    calculate(LOOP_TIME, data.lidars[3]*10-targetDistance, 0, &linvel, &angvel);
-    // red and yellow
-    digitalWrite(redLED, HIGH);
-    digitalWrite(ylwLED, HIGH);
-    digitalWrite(grnLED, LOW);
-
-    // turn 90
-    if(backReading) spinCount = -15; 
-  } else {
-
-    return false;
-
-  }
-
-  
-  // follow backwards (negative both terms)
-  moveVelo(-linvel, angvel);
-  return true;
-}
-
-#define wallFollowAdjustedAngleThres 1
-
-// make the sonar state sticky
-int sonarStateCount = 0;
-int sticky1 = 0;
-int sticky2 = 0;
-
-// Same as wallFollow except it also considers a target to go to, and will break away from the wall (return false) if the wall isn't in the way of the target.
-bool wallFollowAdjusted(struct sensors& data, float targetX, float targetY){
-
-  // printSensorData(data);
-  float deltaX = targetX-odo.currentX;
-  float deltaY = targetY-odo.currentY;
-  float targetAngle = atan2(deltaY, deltaX);
-  float targetMagnitude = hypot(deltaX, deltaY);
-
-  bool leftReading=data.lidars[2] < 30;
-  bool rightReading=data.lidars[3] < 30;
-  bool backReading=data.lidars[1] < 8 && data.lidars[1] > 2; //driving backwards, so if we are about to go forward into something
-
-
-  float linvel=0;
-  float angvel=0;
-
-
-  if(spinCount > 0){
-    spinCount--;
-    angvel = ROT_VEL;
-  } else if(spinCount < 0){
-    spinCount++;
-    angvel = -ROT_VEL;
-  //handle if we abt to hit something
-  } else if(backReading){
-
-    if(leftReading && rightReading) spinCount = 2 * SPIN_AMT;
-    else if (rightReading) spinCount = -SPIN_AMT;
-    else spinCount = SPIN_AMT;
-
-  }else if(leftReading&&rightReading){
-   
-    if(targetMagnitude < 100){
-
-      return false; //give up, let go to angle handle it
-    }
-    calculate(LOOP_TIME, data.lidars[3]*10 - data.lidars[2]*10, 0, &linvel, &angvel);
-  
-        // red yellow and green
-    digitalWrite(redLED, HIGH);
-    digitalWrite(ylwLED, HIGH);
-    digitalWrite(grnLED, HIGH);
-    digitalWrite(bluLED, LOW);
-
-    // turn around
-  } else 
-  if(leftReading){
-
- 
-    float a = targetAngle-odo.currentAngle + PI;
-    if(a<-PI) a+=PI*2;
-    if(a>PI) a-=PI*2;
-
-    // Serial.print("left: ");
-    // Serial.println(a);
-    
-    if(a > 0 || targetMagnitude < 100) return false; //give up, let go to angle handle it
-
-    // only left reading
-    calculate(LOOP_TIME, targetDistance-data.lidars[2]*10, 0, &linvel, &angvel);
-  
-    // yellow and green
-    digitalWrite(redLED, LOW);
-    digitalWrite(ylwLED, HIGH);
-    digitalWrite(grnLED, HIGH);
-    digitalWrite(bluLED, LOW);
-
-    // turn 90
-
-  } else if(rightReading){
-
-
-    float a = targetAngle-odo.currentAngle + PI;
-    if(a<-PI) a+=PI*2;
-    if(a>PI) a-=PI*2;
-    // Serial.print("right: ");
-    // Serial.println(a);
-    if(a < 0 || targetMagnitude < 100){
-
-      return false; //give up, let go to angle handle it
-    }
-
-    // only right
-    calculate(LOOP_TIME, data.lidars[3]*10-targetDistance, 0, &linvel, &angvel);
-  
-
-    // red and yellow
-    digitalWrite(redLED, HIGH);
-    digitalWrite(ylwLED, HIGH);
-    digitalWrite(grnLED, LOW);
-    digitalWrite(bluLED, LOW);
-
-    // turn 90
-  } else {
-    return false;
-  
-  }
-
-  if(sonarStateCount>0) sonarStateCount--;
-
-  moveVelo(-linvel, angvel);
-  return true;
-}
-
-// Go to goal (driving forwards) taking odometry into account. goToGoal is relative coordinates, this is absolute coordinates.
-// Returns true if we reached the goal, false if not.
-bool betterGoToGoal(float targetX, float targetY){
-  float deltaX = targetX-odo.currentX;
-  float deltaY = targetY-odo.currentY;
-  float targetAngle = atan2(deltaY, deltaX);
-  float deltaAngle = targetAngle-odo.currentAngle;
-
-  if(deltaAngle<-PI) deltaAngle+=2*PI;
-  if(deltaAngle>PI) deltaAngle-=2*PI;
-
-  float linvel=0;
-  float angvel=0;
-  float deltaDist = hypot(deltaX, deltaY);
-  if(abs(deltaDist)>betterGoToGoalLinThresh) linvel=MOVE_VEL; //move if we aren't close enough
-
-  if(deltaAngle>betterGoToGoalAngThresh) angvel=ROT_VEL;
-  if(deltaAngle<-betterGoToGoalAngThresh) angvel=-ROT_VEL;
-
-  // don't rotate if you don't plan on moving
-  if(linvel==0) angvel=0;
-
-
-  if(abs(deltaAngle)<AVOID_SPECIAL_CASE_ANGLE_THRESH){
-    moveVelo(linvel, angvel);
-  } else {
-    moveVelo(0, angvel);
-  }  
-
-  return linvel==0&&angvel==0;
-}
-
-// Same as betterGoToGoal except it drives backwards to the goal.
-bool backwardsBetterGoToGoal(float targetX, float targetY){
-  float deltaX = targetX-odo.currentX;
-  float deltaY = targetY-odo.currentY;
-  float targetAngle = atan2(deltaY, deltaX)+PI;
-  if(targetAngle>PI) targetAngle-=PI*2;
-  float deltaAngle = targetAngle-odo.currentAngle;
-
-  float linvel=0;
-  float angvel=0;
-  float deltaDist = hypot(deltaX, deltaY);
-  if(abs(deltaDist)>betterGoToGoalLinThresh) linvel=-MOVE_VEL; //move if we aren't close enough
-
-  if(deltaAngle>betterGoToGoalAngThresh) angvel=ROT_VEL;
-  if(deltaAngle<-betterGoToGoalAngThresh) angvel=-ROT_VEL;
-
-  // don't rotate if you don't plan on moving
-  if(linvel==0) angvel=0;
-
-  // Serial.print(deltaAngle);
-  if(abs(deltaAngle)<AVOID_SPECIAL_CASE_ANGLE_THRESH){
-    moveVelo(linvel, angvel);
-  } else {
-    moveVelo(0, angvel);
-  }  
-  // Serial.print(linvel);
-  return linvel==0&&angvel==0;
-}
-
-
-
-boolean alreadyConnected = false;
-
-WiFiClient client;
 
 
 
@@ -1470,7 +946,6 @@ void setupM4() {
   RPC.bind("read_sensors", read_sensors);  // bind a method to return the sensor data all at once
   RPC.bind("read_odometry", read_odometry);
   RPC.bind("add_relative_target", add_relative_target);
-  RPC.bind("add_absolute_target", add_absolute_target);
   RPC.bind("is_at_position", is_at_position);
 
   // imu
